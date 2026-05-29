@@ -39,8 +39,10 @@ export const GO_MODELS = [
   "mimo-v2.5-pro", "mimo-v2.5",
 ];
 
-// kimi-k2.5: non-reasoning → in output thẳng (glm/deepseek/minimax đốt token vào reasoning).
-export const DEFAULT_MODEL = process.env.TAW_MODEL || "kimi-k2.5";
+// glm-5: ĐÁNG TIN cho vòng lặp agent (multi-turn tool ổn định).
+// kimi-k2.5 nhanh + non-reasoning NHƯNG hỏng multi-turn ("Provider returned error" sau
+// vài tool-result) → chỉ hợp gen 1-phát (TAW_MODEL=kimi-k2.5 + max-steps 1-2), KHÔNG nên làm default.
+export const DEFAULT_MODEL = process.env.TAW_MODEL || "glm-5";
 
 export const MAX_STEPS = Number(process.env.TAW_MAX_STEPS || 40);
 export const MAX_TOKENS = Number(process.env.TAW_MAX_TOKENS || 8192);

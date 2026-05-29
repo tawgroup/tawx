@@ -19,7 +19,7 @@ export async function chat({ messages, tools, model, maxTokens = MAX_TOKENS, sig
   }
 
   let lastErr;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     let res;
     // hard timeout so a stalled generation fails fast instead of hanging forever
     const ctl = new AbortController();
@@ -61,13 +61,16 @@ export async function chat({ messages, tools, model, maxTokens = MAX_TOKENS, sig
       const err = json.error || json;
       const type = err.type || "Error";
       const msg = err.message || JSON.stringify(err);
-      // retryable
-      if (res.status === 429 || res.status >= 500) {
-        lastErr = new Error(`${type}: ${msg}`);
-        await SLEEP(700 * (attempt + 1));
-        continue;
-      }
-      throw new Error(`${type}: ${msg}`);
+      // fatal: vô nghĩa nếu retry (hết tiền, sai model, sai key)
+      const fatal =
+        res.status === 401 ||
+        res.status === 403 ||
+        /CreditsError|ModelError|Insufficient|unauthor|invalid api key/i.test(`${type} ${msg}`);
+      if (fatal) throw new Error(`${type}: ${msg}`);
+      // tạm thời (kể cả "Provider returned error" upstream) -> retry
+      lastErr = new Error(`${type}: ${msg}`);
+      await SLEEP(800 * (attempt + 1));
+      continue;
     }
 
     const choice = (json.choices || [])[0] || {};
