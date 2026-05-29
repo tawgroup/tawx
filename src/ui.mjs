@@ -16,31 +16,6 @@ export const c = {
   underline: wrap(4, 24),
 };
 
-// Minimal zero-dep Markdown → ANSI for the TUI: headings, bold, italic, inline code,
-// bullets, fenced code blocks, links. Safe to re-scan (ANSI codes contain no md chars).
-function renderInline(s) {
-  s = s.replace(/`([^`]+)`/g, (_, t) => c.cyan(t));
-  s = s.replace(/\*\*([^*]+)\*\*/g, (_, t) => c.bold(t));
-  s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_, a, t) => a + c.italic(t));
-  s = s.replace(/(^|[^_\w])_([^_\n]+)_(?![_\w])/g, (_, a, t) => a + c.italic(t));
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, u) => c.underline(c.blue(t)) + c.dim(` (${u})`));
-  return s;
-}
-
-export function renderMarkdown(text) {
-  const out = [];
-  let inFence = false;
-  for (let line of String(text).split("\n")) {
-    if (/^\s*```/.test(line)) { inFence = !inFence; continue; } // drop fence markers
-    if (inFence) { out.push(c.dim("  │ ") + c.cyan(line)); continue; }
-    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
-    if (h) { out.push(c.bold(c.yellow(h[2]))); continue; }
-    line = line.replace(/^(\s*)[-*]\s+/, (_, sp) => sp + c.yellow("• "));
-    out.push(renderInline(line));
-  }
-  return out.join("\n");
-}
-
 export function banner(model) {
   const line = c.dim("─".repeat(48));
   return (
@@ -56,6 +31,66 @@ export function banner(model) {
     line +
     "\n"
   );
+}
+
+// ---- Markdown → ANSI (zero-dep): headings, bold, italic, inline code, bullets, fences, links ----
+function renderInline(s) {
+  s = s.replace(/`([^`]+)`/g, (_, t) => c.cyan(t));
+  s = s.replace(/\*\*([^*]+)\*\*/g, (_, t) => c.bold(t));
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_, a, t) => a + c.italic(t));
+  s = s.replace(/(^|[^_\w])_([^_\n]+)_(?![_\w])/g, (_, a, t) => a + c.italic(t));
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, u) => c.underline(c.blue(t)) + c.dim(` (${u})`));
+  return s;
+}
+
+// A stateful per-line renderer (carries fenced-code-block state across lines).
+// Returns a function(line) -> rendered string, or null for lines to drop (fence markers).
+function lineRenderer() {
+  let inFence = false;
+  return (line) => {
+    if (/^\s*```/.test(line)) { inFence = !inFence; return null; }
+    if (inFence) return c.dim("  │ ") + c.cyan(line);
+    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    if (h) return c.bold(c.yellow(h[2]));
+    line = line.replace(/^(\s*)[-*]\s+/, (_, sp) => sp + c.yellow("• "));
+    return renderInline(line);
+  };
+}
+
+export function renderMarkdown(text) {
+  const render = lineRenderer();
+  const out = [];
+  for (const line of String(text).split("\n")) {
+    const r = render(line);
+    if (r !== null) out.push(r);
+  }
+  return out.join("\n");
+}
+
+// Streaming Markdown: push() text chunks; complete lines are rendered + written immediately,
+// the partial last line is held until the next newline or end().
+export function createMdStream(write) {
+  const render = lineRenderer();
+  let buf = "";
+  return {
+    push(chunk) {
+      buf += chunk;
+      let nl;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        const r = render(line);
+        if (r !== null) write(r + "\n");
+      }
+    },
+    end() {
+      if (buf.length) {
+        const r = render(buf);
+        if (r !== null) write(r + "\n");
+      }
+      buf = "";
+    },
+  };
 }
 
 // a tiny spinner that runs while an async fn is pending

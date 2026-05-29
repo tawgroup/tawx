@@ -27,6 +27,7 @@ export function createAgent(opts = {}) {
   const onEvent = opts.onEvent || (() => {});
   const approve = opts.approve || (async () => true);
   const maxSteps = opts.maxSteps || MAX_STEPS;
+  const stream = opts.stream || false;
 
   const skills = loadSkills(cwd);
   const registry = { ...TOOLS, load_skill: loadSkillTool(skills) };
