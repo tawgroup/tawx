@@ -1,3 +1,9 @@
+// ⚠️ EXPERIMENTAL / WIP — NOT wired into the agent yet and NOT verified end-to-end.
+// Known issue: in the integrated loadMcpTools flow the stdio handshake stalls after
+// `initialize` (works in isolation; bug under investigation). Streamable-HTTP servers
+// like shipkit also use a session/legacy-SSE handshake this client doesn't speak yet.
+// Kept in-tree as a starting point; do not rely on it.
+//
 // Minimal MCP client (zero-dep). Loads tools from MCP servers and exposes them as tawx tools.
 // Supports Streamable-HTTP servers (POST JSON-RPC, SSE or JSON responses) and stdio servers.
 // Config: ~/.taw/mcp.json or <cwd>/.taw/mcp.json — shape: { "mcpServers": { name: def } } or { name: def }.
