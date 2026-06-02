@@ -4,6 +4,23 @@ import { createAgent } from "./agent.mjs";
 import { c, banner, renderMarkdown, createMdStream } from "./ui.mjs";
 import { MODELS, DEFAULT_MODEL, PROVIDER } from "./config.mjs";
 
+const COMMANDS = ["/help", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
+
+function complete(line) {
+  const s = String(line || "");
+  if (!s.startsWith("/")) return [[], s];
+
+  const parts = s.split(/\s+/);
+  if (parts[0] === "/model") {
+    const prefix = parts[1] || "";
+    const hits = MODELS.filter((m) => m.startsWith(prefix)).map((m) => `/model ${m}`);
+    return [hits.length ? hits : MODELS.map((m) => `/model ${m}`), s];
+  }
+
+  const hits = COMMANDS.filter((cmd) => cmd.startsWith(s));
+  return [hits.length ? hits : COMMANDS, s];
+}
+
 const HELP = `
 ${c.bold("Commands:")}
   /help            show help
@@ -15,11 +32,12 @@ ${c.bold("Commands:")}
   /clear           clear conversation history
   /exit            quit
 
+  Tab              autocomplete slash commands and model ids
   Ctrl-C           interrupt the running turn (press again when idle to quit)
 `;
 
 export async function runTui({ model = DEFAULT_MODEL } = {}) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, completer: complete });
   const ask = (q) => new Promise((r) => rl.question(q, r));
 
   let autoApprove = false;
