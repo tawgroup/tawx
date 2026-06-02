@@ -4,7 +4,13 @@ import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
 import { c, banner, renderMarkdown, createMdStream } from "./ui.mjs";
 import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth } from "./config.mjs";
+import { listModels } from "./provider.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
+
+// Live model list for the active provider. Seeded from the hardcoded config list
+// (works offline) and refreshed from the provider's GET /models at startup when
+// available (see refreshModels in runTui). All model UI reads from here.
+let modelList = [...MODELS];
 
 const COMMANDS = ["/help", "/login", "/use", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
 const COMMAND_DESC = {
@@ -27,9 +33,36 @@ function showCommandSuggestions(prefix = "/") {
 }
 
 function showModelSuggestions(prefix = "") {
-  const hits = MODELS.filter((m) => m.startsWith(prefix));
-  const list = hits.length ? hits : MODELS;
+  const hits = modelList.filter((m) => m.startsWith(prefix));
+  const list = hits.length ? hits : modelList;
   return list.map((m) => `  ${c.bold(m)}`).join("\n") + "\n";
+}
+
+// Suggestions to draw live under the input as the user types a slash command.
+// Each item is { value, label }: `value` is what gets run if picked, `label` is
+// the (already-colored) text shown. Returns [] when there's nothing to suggest.
+function liveSuggest(line) {
+  const s = String(line || "");
+  if (!s.startsWith("/")) return [];
+  const parts = s.split(/\s+/);
+  const head = parts[0];
+
+  if (head === "/login" || head === "/use") {
+    const prefix = parts[1] || "";
+    return Object.keys(PROVIDERS)
+      .filter((p) => p.startsWith(prefix))
+      .map((p) => ({ value: `${head} ${p}`, label: `${c.bold(head + " " + p)} ${c.dim("— " + PROVIDERS[p].label)}` }));
+  }
+  if (head === "/model") {
+    const prefix = parts[1] || "";
+    return modelList.filter((m) => m.startsWith(prefix)).map((m) => ({ value: `/model ${m}`, label: c.bold(`/model ${m}`) }));
+  }
+  // Top-level command: only suggest while still typing the command word.
+  if (parts.length > 1) return [];
+  return COMMANDS.filter((cmd) => cmd.startsWith(head)).map((cmd) => ({
+    value: cmd,
+    label: `${c.bold(cmd)} ${c.dim("— " + COMMAND_DESC[cmd])}`,
+  }));
 }
 
 function resolveCommand(raw) {
@@ -40,8 +73,8 @@ function resolveCommand(raw) {
 }
 
 function resolveModel(raw) {
-  if (MODELS.includes(raw)) return raw;
-  const hits = MODELS.filter((m) => m.startsWith(raw));
+  if (modelList.includes(raw)) return raw;
+  const hits = modelList.filter((m) => m.startsWith(raw));
   return hits.length === 1 ? hits[0] : "";
 }
 
@@ -57,8 +90,8 @@ function complete(line) {
   }
   if (parts[0] === "/model") {
     const prefix = parts[1] || "";
-    const hits = MODELS.filter((m) => m.startsWith(prefix)).map((m) => `/model ${m}`);
-    return [hits.length ? hits : MODELS.map((m) => `/model ${m}`), s];
+    const hits = modelList.filter((m) => m.startsWith(prefix)).map((m) => `/model ${m}`);
+    return [hits.length ? hits : modelList.map((m) => `/model ${m}`), s];
   }
 
   const hits = COMMANDS.filter((cmd) => cmd.startsWith(s));
@@ -123,7 +156,7 @@ async function tuiUse(providerName, modelArg, ask) {
 const HELP = `
 ${c.bold("Commands:")}
   /help            show help
-  /login [name]    login provider in TUI: opencode | codex | claude | anthropic
+  /login [name]    login provider in TUI: opencode | codex | claude
   /use <name>      switch provider in TUI and restart
   /model <id>      switch model for this TUI session (e.g. /model qwen3.6-plus)
   /models          list models for active provider
@@ -133,14 +166,106 @@ ${c.bold("Commands:")}
   /clear           clear conversation history
   /exit            quit
 
-  Tab              autocomplete slash commands and model ids
+  Live suggest     type / and matches show under the input as you type
+  ↑/↓              move through the suggestion list (Enter picks the highlighted one)
+  Tab / →          accept the highlighted suggestion into the input
   Prefixes work   e.g. /lo = /login, /wh = /whoami when unique
+  ↑/↓ (no list)    recall previous inputs
   Ctrl-C           interrupt the running turn (press again when idle to quit)
 `;
 
 export async function runTui({ model = DEFAULT_MODEL } = {}) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, completer: complete });
+  // historySize:0 hands ↑/↓ to us — we drive the suggestion dropdown with them
+  // (and fall back to our own input history when no dropdown is showing).
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, completer: complete, historySize: 0 });
   const ask = (q) => new Promise((r) => rl.question(q, r));
+
+  // Refresh the model list from the provider's live /models in the background.
+  // Non-blocking: the hardcoded seed is already usable; this just freshens it.
+  listModels().then((ids) => { if (ids?.length) modelList = ids; }).catch(() => {});
+
+  const inputHist = [];   // our own recall list for ↑/↓ when no dropdown is up
+
+  // Main prompt with live, as-you-type slash-command suggestions drawn below the
+  // input line, navigable with ↑/↓ and selectable with Enter/Tab. readline's
+  // `completer` only fires on Tab; this renders on every keystroke. We draw the
+  // block via save/restore-cursor so the input stays put, and wipe it on submit.
+  const MAX_SUGGEST = 8;
+  const setLine = (text) => { rl.line = text; rl.cursor = text.length; rl._refreshLine?.(); };
+  const askMain = (q) =>
+    new Promise((resolve) => {
+      let items = [];     // current { value, label } suggestions
+      let sel = -1;       // highlighted index, -1 = nothing selected (Enter runs typed text)
+      let hpos = inputHist.length; // cursor into inputHist for ↑/↓ recall
+
+      const draw = () => {
+        process.stdout.write("\x1b7");      // save cursor (at the input position)
+        process.stdout.write("\n\x1b[J");   // drop below input, clear everything beneath
+        if (items.length) {
+          const rows = items.slice(0, MAX_SUGGEST).map((it, i) =>
+            i === sel ? c.magenta("› ") + c.inverse(" " + it.label + " ") : "  " + it.label,
+          );
+          process.stdout.write(rows.join("\n"));
+        }
+        process.stdout.write("\x1b8");      // restore cursor back to the input
+      };
+
+      let pending = false;
+      const recompute = () => {
+        pending = false;
+        const next = liveSuggest(rl.line);
+        // keep selection only if the list is unchanged in length, else reset
+        if (next.length !== items.length) sel = -1;
+        items = next;
+        draw();
+      };
+
+      const onKey = (_str, key) => {
+        if (!key) return;
+        const name = key.name;
+        if (name === "return" || name === "enter") return; // handled in onLine
+
+        // ↑/↓ drive the dropdown when it's visible…
+        if (items.length && (name === "down" || name === "up")) {
+          const n = Math.min(items.length, MAX_SUGGEST);
+          if (name === "down") sel = sel + 1 >= n ? 0 : sel + 1;
+          else sel = sel - 1 < 0 ? n - 1 : sel - 1;
+          draw();
+          return;
+        }
+        // …otherwise ↑/↓ recall our own input history.
+        if (!items.length && (name === "up" || name === "down")) {
+          if (name === "up" && hpos > 0) hpos--;
+          else if (name === "down" && hpos < inputHist.length) hpos++;
+          setLine(inputHist[hpos] || "");
+          return;
+        }
+        // Tab / → accepts the highlighted item into the line (then re-suggest).
+        if (sel >= 0 && (name === "tab" || name === "right")) {
+          setLine(items[sel].value);
+          sel = -1;
+          if (!pending) { pending = true; setImmediate(recompute); }
+          return;
+        }
+        // any other edit → recompute suggestions (deferred so rl.line is updated)
+        if (!pending) { pending = true; setImmediate(recompute); }
+      };
+
+      const onLine = (line) => {
+        process.stdin.removeListener("keypress", onKey);
+        rl.removeListener("line", onLine);
+        process.stdout.write("\x1b[J");     // wipe the suggestion block beneath the input
+        const picked = sel >= 0 && items[sel] ? items[sel].value : line;
+        const trimmed = picked.trim();
+        if (trimmed && inputHist[inputHist.length - 1] !== trimmed) inputHist.push(trimmed);
+        resolve(picked);
+      };
+
+      process.stdin.on("keypress", onKey);
+      rl.on("line", onLine);
+      rl.setPrompt(q);
+      rl.prompt();
+    });
 
   let autoApprove = true;
   let spin = null;
@@ -230,7 +355,7 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
   process.stdout.write(banner(`${agent.model} · ${PROVIDER} · yolo`));
 
   for (;;) {
-    const input = (await ask(c.magenta("› "))).trim();
+    const input = (await askMain(c.magenta("› "))).trim();
     if (!input) continue;
 
     if (input.startsWith("/")) {
@@ -244,13 +369,26 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       else if (cmd === "help") process.stdout.write(HELP + "\n");
       else if (cmd === "login") await tuiLogin(rest[0], ask);
       else if (cmd === "use") await tuiUse(rest[0], rest[1], ask);
-      else if (cmd === "models") process.stdout.write("  " + MODELS.join("\n  ") + "\n");
+      else if (cmd === "models") {
+        const ids = await listModels();
+        if (ids?.length) { modelList = ids; process.stdout.write(c.dim(`  ${ids.length} models (live from ${PROVIDER}):\n`)); }
+        else process.stdout.write(c.dim("  models (built-in list):\n"));
+        process.stdout.write("  " + modelList.join("\n  ") + "\n");
+      }
       else if (cmd === "whoami") process.stdout.write(`  provider: ${PROVIDER}\n  model: ${agent.model}\n  note: use \`tawx login\` or \`tawx use\` outside TUI to switch provider persistently\n`);
       else if (cmd === "model") {
         const picked = rest[0] ? resolveModel(rest[0]) : "";
         if (!rest[0]) process.stdout.write(c.dim("  choose a model:\n") + showModelSuggestions());
         else if (!picked) process.stdout.write(c.yellow(`  model not unique/known: ${rest[0]}\n`) + c.dim("  suggestions:\n") + showModelSuggestions(rest[0]));
-        else { agent.setModel(picked); process.stdout.write(c.dim(`  model → ${picked} (this session)\n`)); }
+        else {
+          agent.setModel(picked);
+          // Persist for the active provider so the choice survives a restart.
+          const cur = AUTH.providers?.[PROVIDER] || {};
+          AUTH.providers = { ...(AUTH.providers || {}), [PROVIDER]: { ...cur, model: picked, baseUrl: cur.baseUrl || PROVIDERS[PROVIDER]?.baseUrl || "" } };
+          AUTH.active = AUTH.active || PROVIDER;
+          saveAuth(AUTH);
+          process.stdout.write(c.dim(`  model → ${picked} (saved for ${PROVIDER})\n`));
+        }
       }
       else if (cmd === "yolo") { autoApprove = true; process.stdout.write(c.yellow("  YOLO: auto-approving every action\n")); }
       else if (cmd === "safe") { autoApprove = false; process.stdout.write(c.dim("  SAFE: ask before write/edit/bash\n")); }

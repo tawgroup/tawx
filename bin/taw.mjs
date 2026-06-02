@@ -113,7 +113,7 @@ Usage:
   tawx build "<task>" --verify "<cmd>"
                                self-driving loop: build → run verify command →
                                if it fails, auto-fix → repeat until it PASSES (hands-off)
-  tawx login [provider]        save credentials (opencode/anthropic API key, codex OAuth, claude CLI)
+  tawx login [provider]        save credentials (opencode API key, codex OAuth, claude CLI)
   tawx use <provider>          switch active provider/model without changing key
   tawx whoami                  show active provider
   tawx models                  list models for the active provider

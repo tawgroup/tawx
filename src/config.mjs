@@ -87,14 +87,6 @@ export const PROVIDERS = {
     defaultModel: "sonnet",
     models: ["sonnet", "opus", "haiku"],
   },
-  anthropic: {
-    type: "anthropic",
-    label: "Claude / Anthropic API key",
-    baseUrl: "https://api.anthropic.com/v1",
-    keyEnv: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-5",
-    models: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5", "claude-3-5-sonnet-latest"],
-  },
 };
 
 export const PROVIDER = process.env.TAW_PROVIDER || AUTH.active || "opencode";

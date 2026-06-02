@@ -447,3 +447,29 @@ export async function chat(opts) {
   if (PROVIDER_CONFIG.type === "anthropic") return chatAnthropic({ ...opts, maxTokens });
   return chatOpenAi({ ...opts, maxTokens });
 }
+
+/**
+ * Fetch the live model list from the active provider.
+ * Only OpenAI-compatible providers expose a usable GET /models; codex (ChatGPT
+ * backend) and claude-cli don't, so we return null there to signal "use the
+ * hardcoded list". Returns a string[] of model ids on success, or null on
+ * any failure (offline, auth, non-openai provider) — callers fall back.
+ */
+export async function listModels() {
+  if (PROVIDER_CONFIG.type !== "openai" || !BASE_URL || !API_KEY) return null;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(new Error("timeout")), REQUEST_TIMEOUT_MS);
+    const res = await fetch(`${BASE_URL}/models`, {
+      headers: { authorization: `Bearer ${API_KEY}` },
+      signal: ctl.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const ids = (j?.data || []).map((m) => m?.id).filter((x) => typeof x === "string" && x);
+    return ids.length ? ids : null;
+  } catch {
+    return null;
+  }
+}

@@ -89,41 +89,50 @@ export function createAgent(opts = {}) {
         return message.content || "";
       }
 
+      // Phase 1 — validate + approve SEQUENTIALLY (approval is an interactive
+      // prompt; can't run several at once). Build a plan of what to execute.
+      const plan = [];
       for (const call of calls) {
         const name = call.function?.name;
         const tool = registry[name];
         const args = safeParse(call.function?.arguments);
         if (!tool || args === null) {
-          messages.push({
-            role: "tool",
-            tool_call_id: call.id,
-            content: !tool ? `ERROR: no such tool "${name}"` : "ERROR: arguments are not valid JSON",
-          });
+          plan.push({ call, content: !tool ? `ERROR: no such tool "${name}"` : "ERROR: arguments are not valid JSON" });
           continue;
         }
         onEvent({ type: "tool_call", name, preview: tool.preview ? tool.preview(args) : "" });
-
         if (tool.needsApproval) {
           const ok = await approve(name, args, tool.preview ? tool.preview(args) : "");
           if (!ok) {
             onEvent({ type: "tool_denied", name });
-            messages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: "The user DENIED running this tool. Try another approach or ask.",
-            });
+            plan.push({ call, content: "The user DENIED running this tool. Try another approach or ask." });
             continue;
           }
         }
+        plan.push({ call, name, tool, args, run: true });
+      }
 
-        let result;
-        try {
-          result = await tool.run(args, ctx);
-        } catch (e) {
-          result = `ERROR running tool: ${e.message}`;
+      // Phase 2 — run the approved tools IN PARALLEL (like pi). Independent
+      // reads/greps no longer wait on each other.
+      await Promise.all(
+        plan.filter((p) => p.run).map(async (p) => {
+          try {
+            p.result = await p.tool.run(p.args, ctx);
+          } catch (e) {
+            p.result = `ERROR running tool: ${e.message}`;
+          }
+        }),
+      );
+
+      // Phase 3 — emit results + push tool messages IN ORDER (tool_call_id must
+      // line up with the assistant's call order regardless of finish order).
+      for (const p of plan) {
+        if (p.run) {
+          onEvent({ type: "tool_result", name: p.name, result: p.result });
+          messages.push({ role: "tool", tool_call_id: p.call.id, content: String(p.result) });
+        } else {
+          messages.push({ role: "tool", tool_call_id: p.call.id, content: p.content });
         }
-        onEvent({ type: "tool_result", name, result });
-        messages.push({ role: "tool", tool_call_id: call.id, content: String(result) });
       }
     }
     onEvent({ type: "max_steps" });
@@ -137,6 +146,9 @@ export function createAgent(opts = {}) {
     },
     setModel(m) {
       model = m;
+      // Keep the system prompt's stated model name in sync, otherwise the agent
+      // keeps introducing itself as the old model after a /model switch.
+      messages[0] = { role: "system", content: systemPrompt({ cwd, model }) };
     },
     reset() {
       messages.length = 1; // keep system
