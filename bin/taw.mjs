@@ -7,6 +7,7 @@ import { createAgent } from "../src/agent.mjs";
 import { runTui } from "../src/tui.mjs";
 import { assertKey, MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, saveAuth, AUTH_PATH } from "../src/config.mjs";
 import { c } from "../src/ui.mjs";
+import { loginCodexBrowser, loginCodexDeviceCode } from "../src/codex-oauth.mjs";
 
 const argv = process.argv.slice(2);
 
@@ -66,15 +67,21 @@ async function login(providerArg = "") {
   const old = AUTH.providers?.[provider] || {};
   const model = getFlag("--model", "") || await prompt("Default model", old.model || cfg.defaultModel);
   const baseUrl = getFlag("--base-url", "") || getFlag("--url", "") || await prompt("Base URL", old.baseUrl || cfg.baseUrl);
-  const flagKey = getFlag("--api-key", "") || getFlag("--key", "");
-  const apiKey = flagKey || await prompt(`API key (${cfg.keyEnv})`, old.apiKey ? "keep-existing" : "");
 
   const next = { ...AUTH, active: provider, providers: { ...(AUTH.providers || {}) } };
-  next.providers[provider] = {
-    model,
-    baseUrl,
-    apiKey: apiKey === "keep-existing" ? old.apiKey : apiKey,
-  };
+  if (provider === "codex") {
+    const method = getFlag("--method", "") || await prompt("Login method: browser/device", "browser");
+    const oauth = method === "device" ? await loginCodexDeviceCode() : await loginCodexBrowser({ ask: prompt });
+    next.providers[provider] = { model, baseUrl, oauth };
+  } else {
+    const flagKey = getFlag("--api-key", "") || getFlag("--key", "");
+    const apiKey = flagKey || await prompt(`API key (${cfg.keyEnv})`, old.apiKey ? "keep-existing" : "");
+    next.providers[provider] = {
+      model,
+      baseUrl,
+      apiKey: apiKey === "keep-existing" ? old.apiKey : apiKey,
+    };
+  }
   saveAuth(next);
   process.stdout.write(c.green(`✓ Active provider: ${provider}\n`));
   process.stdout.write(c.dim(`  model: ${model}\n  auth: ${AUTH_PATH}\n`));
@@ -105,7 +112,7 @@ Usage:
   tawx build "<task>" --verify "<cmd>"
                                self-driving loop: build → run verify command →
                                if it fails, auto-fix → repeat until it PASSES (hands-off)
-  tawx login [provider]        save credentials (opencode/codex/claude)
+  tawx login [provider]        save credentials (opencode/claude API key, codex OAuth)
   tawx use <provider>          switch active provider/model without changing key
   tawx whoami                  show active provider
   tawx models                  list models for the active provider
@@ -120,6 +127,7 @@ Options:
   --rounds <n>                 (build) max auto-fix rounds (default 4)
   --api-key <key>              (login) provider key, avoids prompt
   --base-url <url>             (login/use) override provider endpoint
+  --method <browser|device>    (codex login) OAuth method
 
 Env:
   TAW_PROVIDER=<opencode|codex|claude>

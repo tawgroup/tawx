@@ -1,5 +1,6 @@
 // Model clients: OpenAI-compatible chat/completions + Anthropic Messages (Claude).
-import { BASE_URL, API_KEY, MAX_TOKENS, REQUEST_TIMEOUT_MS, PROVIDER_CONFIG } from "./config.mjs";
+import { BASE_URL, API_KEY, MAX_TOKENS, REQUEST_TIMEOUT_MS, PROVIDER_CONFIG, PROVIDER, AUTH, SAVED_PROVIDER, saveAuth } from "./config.mjs";
+import { codexAccountId, refreshCodexOAuth } from "./codex-oauth.mjs";
 
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -248,12 +249,148 @@ async function chatAnthropic({ messages, tools, model, maxTokens, signal }) {
   throw lastErr || new Error("request failed");
 }
 
+function responsesTools(tools = []) {
+  return tools.map((t) => ({
+    type: "function",
+    name: t.function.name,
+    description: t.function.description || "",
+    parameters: t.function.parameters || { type: "object", properties: {} },
+    strict: false,
+  }));
+}
+
+function toCodexInput(messages) {
+  const input = [];
+  let instructions = "You are a helpful assistant.";
+  for (const m of messages) {
+    if (m.role === "system") { instructions = m.content || instructions; continue; }
+    if (m.role === "tool") {
+      input.push({ type: "function_call_output", call_id: m.tool_call_id, output: String(m.content || "") });
+      continue;
+    }
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      if (m.content) input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: m.content }] });
+      for (const tc of m.tool_calls) {
+        input.push({
+          type: "function_call",
+          call_id: tc.id,
+          name: tc.function?.name,
+          arguments: tc.function?.arguments || "{}",
+        });
+      }
+      continue;
+    }
+    input.push({
+      type: "message",
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: [{ type: m.role === "assistant" ? "output_text" : "input_text", text: String(m.content || "") }],
+    });
+  }
+  return { instructions, input };
+}
+
+function codexUrl() {
+  const raw = BASE_URL.replace(/\/+$/, "");
+  if (raw.endsWith("/codex/responses")) return raw;
+  if (raw.endsWith("/codex")) return `${raw}/responses`;
+  return `${raw}/codex/responses`;
+}
+
+async function codexToken() {
+  let oauth = SAVED_PROVIDER.oauth;
+  if (oauth?.refresh && oauth.expires && oauth.expires < Date.now() + 60_000) {
+    oauth = await refreshCodexOAuth(oauth);
+    const next = { ...AUTH, providers: { ...(AUTH.providers || {}) } };
+    next.providers[PROVIDER] = { ...(next.providers[PROVIDER] || {}), oauth };
+    saveAuth(next);
+  }
+  const access = process.env.TAW_API_KEY || process.env.OPENAI_CODEX_ACCESS_TOKEN || oauth?.access || API_KEY;
+  if (!access) throw new Error("No Codex OAuth token. Run: tawx login codex");
+  return { access, accountId: oauth?.accountId || codexAccountId(access) };
+}
+
+async function chatCodex({ messages, tools, model, signal, onToken }) {
+  const { instructions, input } = toCodexInput(messages);
+  const { access, accountId } = await codexToken();
+  const body = {
+    model,
+    store: false,
+    stream: true,
+    instructions,
+    input,
+    text: { verbosity: "low" },
+    include: ["reasoning.encrypted_content"],
+    tool_choice: "auto",
+    parallel_tool_calls: true,
+  };
+  const rtools = responsesTools(tools);
+  if (rtools.length) body.tools = rtools;
+
+  const res = await fetch(codexUrl(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "chatgpt-account-id": accountId,
+      originator: "tawx",
+      "OpenAI-Beta": "responses=experimental",
+      accept: "text/event-stream",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw new Error(`Codex request failed (${res.status}): ${await res.text().catch(() => res.statusText)}`);
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let content = "";
+  const calls = new Map();
+  let usage = {};
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      let ev; try { ev = JSON.parse(data); } catch { continue; }
+      if (ev.type === "response.output_text.delta" && ev.delta) {
+        content += ev.delta;
+        if (onToken) onToken(ev.delta);
+      } else if (ev.type === "response.output_item.added" && ev.item?.type === "function_call") {
+        calls.set(ev.item.call_id, { id: ev.item.call_id, type: "function", function: { name: ev.item.name, arguments: ev.item.arguments || "" } });
+      } else if (ev.type === "response.function_call_arguments.delta") {
+        const call = [...calls.values()].at(-1);
+        if (call) call.function.arguments += ev.delta || "";
+      } else if (ev.type === "response.function_call_arguments.done") {
+        const call = [...calls.values()].at(-1);
+        if (call) call.function.arguments = ev.arguments || call.function.arguments || "{}";
+      } else if (ev.type === "response.output_item.done" && ev.item?.type === "function_call") {
+        calls.set(ev.item.call_id, { id: ev.item.call_id, type: "function", function: { name: ev.item.name, arguments: ev.item.arguments || "{}" } });
+      } else if (ev.type === "response.completed" && ev.response?.usage) {
+        const u = ev.response.usage;
+        usage = { prompt_tokens: u.input_tokens, completion_tokens: u.output_tokens, total_tokens: u.total_tokens };
+      }
+    }
+  }
+  const message = { role: "assistant", content };
+  const tool_calls = [...calls.values()];
+  if (tool_calls.length) message.tool_calls = tool_calls;
+  return { message, finish_reason: tool_calls.length ? "tool_calls" : "stop", usage };
+}
+
 /**
  * Call the model once.
  * @returns {Promise<{message: object, finish_reason: string, usage: object}>}
  */
 export async function chat(opts) {
   const maxTokens = opts.maxTokens || MAX_TOKENS;
+  if (PROVIDER_CONFIG.type === "codex") return chatCodex({ ...opts, maxTokens });
   if (PROVIDER_CONFIG.type === "anthropic") return chatAnthropic({ ...opts, maxTokens });
   return chatOpenAi({ ...opts, maxTokens });
 }
