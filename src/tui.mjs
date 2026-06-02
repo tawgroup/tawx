@@ -7,8 +7,9 @@ import { MODELS, DEFAULT_MODEL, PROVIDER } from "./config.mjs";
 const HELP = `
 ${c.bold("Commands:")}
   /help            show help
-  /model <id>      switch model (e.g. /model qwen3.6-plus)
+  /model <id>      switch model for this TUI session (e.g. /model qwen3.6-plus)
   /models          list models for active provider
+  /whoami          show active provider/model
   /yolo            auto-approve every action (write/edit/bash)
   /safe            turn off auto-approve (default)
   /clear           clear conversation history
@@ -126,7 +127,8 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       if (cmd === "exit" || cmd === "quit") break;
       else if (cmd === "help") process.stdout.write(HELP + "\n");
       else if (cmd === "models") process.stdout.write("  " + MODELS.join("\n  ") + "\n");
-      else if (cmd === "model") { if (rest[0]) { agent.setModel(rest[0]); process.stdout.write(c.dim(`  model → ${rest[0]}\n`)); } }
+      else if (cmd === "whoami") process.stdout.write(`  provider: ${PROVIDER}\n  model: ${agent.model}\n  note: use \`tawx login\` or \`tawx use\` outside TUI to switch provider persistently\n`);
+      else if (cmd === "model") { if (rest[0]) { agent.setModel(rest[0]); process.stdout.write(c.dim(`  model → ${rest[0]} (this session)\n`)); } }
       else if (cmd === "yolo") { autoApprove = true; process.stdout.write(c.yellow("  YOLO: auto-approving every action\n")); }
       else if (cmd === "safe") { autoApprove = false; process.stdout.write(c.dim("  SAFE: ask before write/edit/bash\n")); }
       else if (cmd === "clear") { agent.reset(); process.stdout.write(c.dim("  history cleared\n")); }

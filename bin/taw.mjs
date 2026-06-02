@@ -52,19 +52,22 @@ async function prompt(q, def = "") {
   return ans.trim() || def;
 }
 
-async function login() {
-  process.stdout.write("Choose provider:\n");
+async function login(providerArg = "") {
   const names = Object.keys(PROVIDERS);
-  names.forEach((name, i) => process.stdout.write(`  ${i + 1}. ${name} — ${PROVIDERS[name].label}\n`));
-  const picked = await prompt("Provider", PROVIDER);
+  if (!providerArg) {
+    process.stdout.write("Choose provider:\n");
+    names.forEach((name, i) => process.stdout.write(`  ${i + 1}. ${name} — ${PROVIDERS[name].label}\n`));
+  }
+  const picked = providerArg || await prompt("Provider", PROVIDER);
   const provider = names[Number(picked) - 1] || picked;
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error(`Unknown provider: ${provider}`);
 
   const old = AUTH.providers?.[provider] || {};
-  const model = await prompt("Default model", old.model || cfg.defaultModel);
-  const baseUrl = await prompt("Base URL", old.baseUrl || cfg.baseUrl);
-  const apiKey = await prompt(`API key (${cfg.keyEnv})`, old.apiKey ? "keep-existing" : "");
+  const model = getFlag("--model", "") || await prompt("Default model", old.model || cfg.defaultModel);
+  const baseUrl = getFlag("--base-url", "") || getFlag("--url", "") || await prompt("Base URL", old.baseUrl || cfg.baseUrl);
+  const flagKey = getFlag("--api-key", "") || getFlag("--key", "");
+  const apiKey = flagKey || await prompt(`API key (${cfg.keyEnv})`, old.apiKey ? "keep-existing" : "");
 
   const next = { ...AUTH, active: provider, providers: { ...(AUTH.providers || {}) } };
   next.providers[provider] = {
@@ -73,7 +76,24 @@ async function login() {
     apiKey: apiKey === "keep-existing" ? old.apiKey : apiKey,
   };
   saveAuth(next);
-  process.stdout.write(c.green(`✓ Logged in to ${provider}. Saved ${AUTH_PATH}\n`));
+  process.stdout.write(c.green(`✓ Active provider: ${provider}\n`));
+  process.stdout.write(c.dim(`  model: ${model}\n  auth: ${AUTH_PATH}\n`));
+}
+
+async function useProvider(providerArg = "") {
+  const provider = providerArg || getFlag("--provider", "") || PROVIDER;
+  const cfg = PROVIDERS[provider];
+  if (!cfg) throw new Error(`Unknown provider: ${provider}`);
+  const old = AUTH.providers?.[provider] || {};
+  const next = { ...AUTH, active: provider, providers: { ...(AUTH.providers || {}) } };
+  next.providers[provider] = {
+    ...old,
+    model: getFlag("--model", "") || old.model || cfg.defaultModel,
+    baseUrl: getFlag("--base-url", "") || getFlag("--url", "") || old.baseUrl || cfg.baseUrl,
+  };
+  saveAuth(next);
+  process.stdout.write(c.green(`✓ Active provider: ${provider}\n`));
+  process.stdout.write(c.dim(`  model: ${next.providers[provider].model}\n  auth: ${AUTH_PATH}\n`));
 }
 
 const HELP = `tawx — minimal coding agent harness
@@ -85,7 +105,8 @@ Usage:
   tawx build "<task>" --verify "<cmd>"
                                self-driving loop: build → run verify command →
                                if it fails, auto-fix → repeat until it PASSES (hands-off)
-  tawx login                   save provider credentials (opencode/codex/claude)
+  tawx login [provider]        save credentials (opencode/codex/claude)
+  tawx use <provider>          switch active provider/model without changing key
   tawx whoami                  show active provider
   tawx models                  list models for the active provider
   tawx --help
@@ -97,6 +118,8 @@ Options:
   --task-file <path>           read the task from a file (keeps the cmdline short & safe)
   --verify "<cmd>"             (build) shell command that proves success (exit 0 = pass)
   --rounds <n>                 (build) max auto-fix rounds (default 4)
+  --api-key <key>              (login) provider key, avoids prompt
+  --base-url <url>             (login/use) override provider endpoint
 
 Env:
   TAW_PROVIDER=<opencode|codex|claude>
@@ -114,7 +137,11 @@ async function main() {
     return;
   }
   if (cmd === "login") {
-    await login();
+    await login(argv[1]?.startsWith("-") ? "" : argv[1]);
+    return;
+  }
+  if (cmd === "use") {
+    await useProvider(argv[1]?.startsWith("-") ? "" : argv[1]);
     return;
   }
   if (cmd === "whoami") {
