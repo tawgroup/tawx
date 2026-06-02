@@ -1,12 +1,16 @@
 // Interactive terminal UI (readline + ANSI). Chat-style, with streaming, tool rendering + approval.
 import readline from "node:readline";
+import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
 import { c, banner, renderMarkdown, createMdStream } from "./ui.mjs";
-import { MODELS, DEFAULT_MODEL, PROVIDER } from "./config.mjs";
+import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth } from "./config.mjs";
+import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
 
-const COMMANDS = ["/help", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
+const COMMANDS = ["/help", "/login", "/use", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
 const COMMAND_DESC = {
   "/help": "show help",
+  "/login": "login provider inside TUI",
+  "/use": "switch provider/model and restart TUI",
   "/model": "switch model for this TUI session",
   "/models": "list models for active provider",
   "/whoami": "show active provider/model",
@@ -33,6 +37,11 @@ function complete(line) {
   if (!s.startsWith("/")) return [[], s];
 
   const parts = s.split(/\s+/);
+  if (parts[0] === "/login" || parts[0] === "/use") {
+    const prefix = parts[1] || "";
+    const hits = Object.keys(PROVIDERS).filter((p) => p.startsWith(prefix)).map((p) => `${parts[0]} ${p}`);
+    return [hits.length ? hits : Object.keys(PROVIDERS).map((p) => `${parts[0]} ${p}`), s];
+  }
   if (parts[0] === "/model") {
     const prefix = parts[1] || "";
     const hits = MODELS.filter((m) => m.startsWith(prefix)).map((m) => `/model ${m}`);
@@ -43,9 +52,61 @@ function complete(line) {
   return [hits.length ? hits : COMMANDS, s];
 }
 
+function restartTui() {
+  process.stdout.write(c.dim("\nrestarting tawx…\n"));
+  spawnSync(process.execPath, [process.argv[1]], { stdio: "inherit" });
+  process.exit(0);
+}
+
+async function tuiLogin(providerName, ask) {
+  const names = Object.keys(PROVIDERS);
+  let provider = providerName;
+  if (!provider) {
+    process.stdout.write("  providers:\n" + names.map((p, i) => `    ${i + 1}. ${p} — ${PROVIDERS[p].label}`).join("\n") + "\n");
+    const picked = await ask(c.yellow("  provider: "));
+    provider = names[Number(picked.trim()) - 1] || picked.trim();
+  }
+  const cfg = PROVIDERS[provider];
+  if (!cfg) { process.stdout.write(c.red(`  unknown provider: ${provider}\n`)); return; }
+
+  const old = AUTH.providers?.[provider] || {};
+  const model = (await ask(c.yellow(`  default model [${old.model || cfg.defaultModel}]: `))).trim() || old.model || cfg.defaultModel;
+  const baseUrl = (await ask(c.yellow(`  base URL [${old.baseUrl || cfg.baseUrl}]: `))).trim() || old.baseUrl || cfg.baseUrl;
+
+  const next = { ...AUTH, active: provider, providers: { ...(AUTH.providers || {}) } };
+  if (provider === "codex") {
+    const method = ((await ask(c.yellow("  codex login method browser/device [browser]: "))).trim() || "browser").toLowerCase();
+    const oauth = method === "device" ? await loginCodexDeviceCode() : await loginCodexBrowser({ ask: async (q) => ask(c.yellow("  " + q + ": ")) });
+    next.providers[provider] = { model, baseUrl, oauth };
+  } else {
+    const apiKey = (await ask(c.yellow(`  API key ${old.apiKey ? "[keep existing]" : ""}: `))).trim() || old.apiKey || "";
+    if (!apiKey) { process.stdout.write(c.red("  missing API key\n")); return; }
+    next.providers[provider] = { model, baseUrl, apiKey };
+  }
+  saveAuth(next);
+  process.stdout.write(c.green(`  ✓ logged in: ${provider}\n`) + c.dim(`  saved: ${AUTH_PATH}\n`));
+  const r = (await ask(c.yellow("  restart TUI with this provider now? [Y/n] "))).trim().toLowerCase();
+  if (r !== "n" && r !== "no") restartTui();
+}
+
+async function tuiUse(providerName, modelArg, ask) {
+  const provider = providerName || PROVIDER;
+  const cfg = PROVIDERS[provider];
+  if (!cfg) { process.stdout.write(c.red(`  unknown provider: ${provider}\n`)); return; }
+  const old = AUTH.providers?.[provider] || {};
+  const model = modelArg || old.model || cfg.defaultModel;
+  const next = { ...AUTH, active: provider, providers: { ...(AUTH.providers || {}) } };
+  next.providers[provider] = { ...old, model, baseUrl: old.baseUrl || cfg.baseUrl };
+  saveAuth(next);
+  process.stdout.write(c.green(`  ✓ active provider → ${provider}\n`) + c.dim(`  model → ${model}\n`));
+  restartTui();
+}
+
 const HELP = `
 ${c.bold("Commands:")}
   /help            show help
+  /login [name]    login provider in TUI: opencode | codex | claude
+  /use <name>      switch provider in TUI and restart
   /model <id>      switch model for this TUI session (e.g. /model qwen3.6-plus)
   /models          list models for active provider
   /whoami          show active provider/model
@@ -166,6 +227,8 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       const [cmd, ...rest] = input.slice(1).split(/\s+/);
       if (cmd === "exit" || cmd === "quit") break;
       else if (cmd === "help") process.stdout.write(HELP + "\n");
+      else if (cmd === "login") await tuiLogin(rest[0], ask);
+      else if (cmd === "use") await tuiUse(rest[0], rest[1], ask);
       else if (cmd === "models") process.stdout.write("  " + MODELS.join("\n  ") + "\n");
       else if (cmd === "whoami") process.stdout.write(`  provider: ${PROVIDER}\n  model: ${agent.model}\n  note: use \`tawx login\` or \`tawx use\` outside TUI to switch provider persistently\n`);
       else if (cmd === "model") {
