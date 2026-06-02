@@ -9,7 +9,7 @@ It intentionally does **not** include Skills, MCP, plugin systems, or other heav
 ## What's inside
 
 - 🔁 Minimal model ↔ tool loop with native function-calling.
-- 🛠️ Built-in tools only: `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_dir`, `bash`, `todo_write`.
+- 🛠️ Built-in tools only: `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_dir`, `bash`.
 - 📋 Project context from `AGENTS.md`, `CLAUDE.md`, `.taw/context.md`, or `.cursorrules`.
 - 💬 Interactive TUI with streaming, spinner, and action approval.
 - 🤖 Headless `run` and self-verifying `build --verify` modes.

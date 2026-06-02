@@ -278,47 +278,6 @@ export const TOOLS = {
     },
   },
 
-  todo_write: {
-    schema: {
-      type: "function",
-      function: {
-        name: "todo_write",
-        description:
-          "Maintain a task checklist for the CURRENT request. Pass the FULL list each time (it replaces the previous one). " +
-          "Use it for any multi-step task: write the plan up front, then re-send the list flipping each item to 'in_progress' then 'completed' as you go. " +
-          "Keep exactly one item 'in_progress' at a time. Skip it for trivial one-step tasks.",
-        parameters: {
-          type: "object",
-          properties: {
-            todos: {
-              type: "array",
-              description: "the full, ordered task list",
-              items: {
-                type: "object",
-                properties: {
-                  content: { type: "string" },
-                  status: { type: "string", enum: ["pending", "in_progress", "completed"] },
-                },
-                required: ["content", "status"],
-              },
-            },
-          },
-          required: ["todos"],
-        },
-      },
-    },
-    needsApproval: false,
-    preview: (a) => `${(a.todos || []).length} item(s)`,
-    async run(a, ctx) {
-      const todos = Array.isArray(a.todos) ? a.todos : [];
-      ctx.todos = todos; // stash for the UI to render
-      if (ctx.onEvent) ctx.onEvent({ type: "todos", todos });
-      const mark = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
-      const done = todos.filter((t) => t.status === "completed").length;
-      const body = todos.map((t) => `  ${mark[t.status] || "[ ]"} ${t.content}`).join("\n");
-      return `Updated todo list (${done}/${todos.length} done):\n${body}`;
-    },
-  },
 
   bash: {
     schema: {

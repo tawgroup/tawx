@@ -58,24 +58,13 @@ assert.ok(gl.includes("src/deep/x.mjs"), "glob finds nested file");
 assert.ok(!gl.includes("node_modules"), "glob skips node_modules");
 ok("glob (** + ignore dirs)");
 
-// todo_write
-const todoEvents = [];
-const tctx = { ...ctx, onEvent: (e) => todoEvents.push(e) };
-const td = await TOOLS.todo_write.run(
-  { todos: [{ content: "step a", status: "completed" }, { content: "step b", status: "in_progress" }] },
-  tctx,
-);
-assert.ok(td.includes("1/2 done") && td.includes("[x] step a") && td.includes("[~] step b"), "todo render");
-assert.ok(todoEvents.some((e) => e.type === "todos"), "todo emits event");
-ok("todo_write");
-
 console.log("OFFLINE project context:");
 fs.writeFileSync(path.join(tmp, "AGENTS.md"), "Use 2-space indent. Prefer fp style.");
 const pc = loadProjectContext(tmp);
 assert.ok(pc && pc.name === "AGENTS.md" && /2-space indent/.test(pc.text), "loads AGENTS.md");
 const sys = systemPrompt({ cwd: tmp, model: "glm-5" });
 assert.ok(sys.includes("Project instructions") && sys.includes("2-space indent"), "injects into prompt");
-assert.ok(sys.includes("glob") && sys.includes("todo_write"), "prompt advertises new tools");
+assert.ok(sys.includes("glob") && sys.includes("bash"), "prompt advertises tools");
 ok("AGENTS.md auto-loaded into system prompt");
 
 if (!API_KEY) {

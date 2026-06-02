@@ -31,7 +31,7 @@ export function createAgent(opts = {}) {
 
   const registry = { ...TOOLS };
   const tools = toolSchemas();
-  const ctx = { cwd, onEvent }; // onEvent lets tools (e.g. todo_write) surface UI events
+  const ctx = { cwd, onEvent };
 
   const messages = [
     { role: "system", content: systemPrompt({ cwd, model }) },
