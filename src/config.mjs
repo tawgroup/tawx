@@ -1,4 +1,4 @@
-// taw-harness config — resolves API key, base URL, model from env/.env/CLI.
+// tawx-harness config — resolves API key, base URL, model from env/.env/CLI.
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";

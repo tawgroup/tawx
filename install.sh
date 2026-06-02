@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# taw harness installer. One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/tawgroup/taw-harness/main/install.sh | bash
+# tawx-harness installer. One-liner:
+#   curl -fsSL https://raw.githubusercontent.com/tawgroup/tawx-harness/main/install.sh | bash
 set -euo pipefail
 
-REPO="https://github.com/tawgroup/taw-harness.git"
-DIR="${TAW_HOME:-$HOME/.taw-harness}"
+REPO="https://github.com/tawgroup/tawx-harness.git"
+DIR="${TAW_HOME:-$HOME/.tawx-harness}"
 
 echo "▟▙ tawx installer"
 
@@ -44,8 +44,8 @@ else
     *)
       for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
         [ -e "$rc" ] || continue
-        grep -q 'taw harness PATH' "$rc" 2>/dev/null || \
-          printf '\n# taw harness PATH\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
+        grep -q 'tawx harness PATH' "$rc" 2>/dev/null || \
+          printf '\n# tawx harness PATH\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
       done
       echo "  → added ~/.local/bin to PATH. Open a NEW terminal, or run:"
       echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""

@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import assert from "node:assert";
 import { TOOLS } from "../src/tools.mjs";
-import { loadSkills, skillsIndex } from "../src/skills.mjs";
 import { loadProjectContext, systemPrompt } from "../src/prompt.mjs";
 import { API_KEY } from "../src/config.mjs";
 import { createAgent } from "../src/agent.mjs";
@@ -70,17 +69,11 @@ assert.ok(td.includes("1/2 done") && td.includes("[x] step a") && td.includes("[
 assert.ok(todoEvents.some((e) => e.type === "todos"), "todo emits event");
 ok("todo_write");
 
-console.log("OFFLINE skills:");
-const skills = loadSkills(process.cwd());
-assert.ok(skills.size >= 1, "should load bundled skills");
-assert.ok(skillsIndex(skills).includes("git-commit"));
-ok(`loaded ${skills.size} skills`);
-
 console.log("OFFLINE project context:");
 fs.writeFileSync(path.join(tmp, "AGENTS.md"), "Use 2-space indent. Prefer fp style.");
 const pc = loadProjectContext(tmp);
 assert.ok(pc && pc.name === "AGENTS.md" && /2-space indent/.test(pc.text), "loads AGENTS.md");
-const sys = systemPrompt({ cwd: tmp, model: "glm-5", skillsIndexStr: "" });
+const sys = systemPrompt({ cwd: tmp, model: "glm-5" });
 assert.ok(sys.includes("Project instructions") && sys.includes("2-space indent"), "injects into prompt");
 assert.ok(sys.includes("glob") && sys.includes("todo_write"), "prompt advertises new tools");
 ok("AGENTS.md auto-loaded into system prompt");

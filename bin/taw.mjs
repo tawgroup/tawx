@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// taw harness CLI entry. Modes: TUI (default), headless run, self-verify build, models, help.
+// tawx-harness CLI entry. Modes: TUI (default), headless run, self-verify build, models, help.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createAgent } from "../src/agent.mjs";
@@ -37,8 +37,6 @@ const headlessEvents = {
       process.stderr.write(c.cyan("☑ plan\n") + ev.todos.map((t) => "  " + (m[t.status] || "○") + " " + t.content).join("\n") + "\n");
     }
     else if (ev.type === "max_steps") process.stderr.write(c.yellow("⚠ reached step limit\n"));
-    else if (ev.type === "mcp") process.stderr.write(c.dim(`🔌 MCP ${ev.server}: ${ev.count} tools\n`));
-    else if (ev.type === "mcp_error") process.stderr.write(c.dim(`🔌 MCP ${ev.server}: ${ev.error}\n`));
     else if (ev.type === "compact_done") process.stderr.write(c.dim(`♻ compacted context → ~${ev.after} tok\n`));
   },
 };
@@ -122,7 +120,7 @@ async function main() {
     let prompt =
       task +
       "\n\nNOTE: after you finish, the system will AUTOMATICALLY run a verify command to confirm the app really works. " +
-      "If a relevant skill exists (e.g. 'fullstack'), call load_skill to follow its playbook (split into small files, isolate test data, map '/'→index.html, self boot+curl).";
+      "Build in small files, verify with real commands, and keep explanations short.";
 
     for (let round = 1; round <= rounds; round++) {
       process.stderr.write(c.bold(`\n=== Round ${round}/${rounds} ===\n`));

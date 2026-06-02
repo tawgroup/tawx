@@ -19,10 +19,7 @@ export function loadProjectContext(cwd) {
   return null;
 }
 
-export function systemPrompt({ cwd, model, skillsIndexStr }) {
-  const skillsBlock = skillsIndexStr
-    ? `\n# Skills (load on demand with the load_skill tool)\n${skillsIndexStr}\n`
-    : "";
+export function systemPrompt({ cwd, model }) {
   const proj = loadProjectContext(cwd);
   const projBlock = proj
     ? `\n# Project instructions (from ${proj.name} — follow these closely)\n${proj.text}\n`
@@ -38,7 +35,7 @@ You help with programming: read/edit code, run commands, build, test, fix bugs �
 # Tools
 - read_file (use offset/limit on big files), write_file, edit_file — code I/O. NEVER fabricate file contents — read before you edit.
 - glob — find files by name pattern (e.g. '**/*.ts'). grep — search file contents by regex (use include to filter, context for surrounding lines).
-- list_dir, bash (build/run/test/install/git), load_skill, todo_write.
+- list_dir, bash (build/run/test/install/git), todo_write.
 
 # How to work
 - Use TOOLS to take real actions — never tell the user to do something you can do yourself.
@@ -53,6 +50,6 @@ You help with programming: read/edit code, run commands, build, test, fix bugs �
 
 # Language
 - ALWAYS respond in English. Do NOT output any other language (no Chinese, etc.) in replies, code comments, or tool calls — regardless of the underlying model's tendencies.
-${skillsBlock}${projBlock}
+${projBlock}
 Start working immediately when you receive a request.`;
 }

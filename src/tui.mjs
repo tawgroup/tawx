@@ -11,7 +11,6 @@ ${c.bold("Commands:")}
   /models          list OpenCode Go models
   /yolo            auto-approve every action (write/edit/bash)
   /safe            turn off auto-approve (default)
-  /skills          list available skills
   /clear           clear conversation history
   /exit            quit
 
@@ -24,7 +23,6 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
 
   let autoApprove = false;
   let spin = null;
-  let activeSkill = null;   // last skill loaded via load_skill
   let turnStart = 0;        // wall-clock of the current model turn
   let mdStream = null;      // streaming markdown renderer for the current assistant message
   const stopSpin = () => {
@@ -40,8 +38,7 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
         case "thinking": {
           turnStart = Date.now();
           const fr = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]; let i = 0;
-          const tag = activeSkill ? c.dim(` · skill:${activeSkill}`) : "";
-          spin = setInterval(() => process.stdout.write("\r" + c.magenta(fr[i++ % fr.length]) + c.dim(` ${ev.model} thinking…`) + tag + "  "), 80);
+          spin = setInterval(() => process.stdout.write("\r" + c.magenta(fr[i++ % fr.length]) + c.dim(` ${ev.model} thinking…`) + "  "), 80);
           break;
         }
         case "assistant_delta":
@@ -56,7 +53,6 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
           else process.stdout.write(c.bold("⏺ ") + renderMarkdown(ev.text.trim()) + "\n");
           break;
         case "tool_call":
-          if (ev.name === "load_skill") activeSkill = String(ev.preview).trim();
           process.stdout.write(c.green("  ⚒ ") + c.bold(ev.name) + c.dim("  " + String(ev.preview).split("\n")[0].slice(0, 80)) + "\n");
           break;
         case "tool_result": {
@@ -85,12 +81,6 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
           break;
         case "max_steps":
           process.stdout.write(c.yellow("  ⚠ reached step limit\n"));
-          break;
-        case "mcp":
-          process.stdout.write(c.dim(`  🔌 MCP ${ev.server}: ${ev.count} tools\n`));
-          break;
-        case "mcp_error":
-          process.stdout.write(c.dim(`  🔌 MCP ${ev.server}: ${ev.error}\n`));
           break;
         case "compact_start":
           process.stdout.write(c.dim(`  ♻ compacting context (~${ev.before} tok)…\n`));
@@ -139,8 +129,7 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       else if (cmd === "model") { if (rest[0]) { agent.setModel(rest[0]); process.stdout.write(c.dim(`  model → ${rest[0]}\n`)); } }
       else if (cmd === "yolo") { autoApprove = true; process.stdout.write(c.yellow("  YOLO: auto-approving every action\n")); }
       else if (cmd === "safe") { autoApprove = false; process.stdout.write(c.dim("  SAFE: ask before write/edit/bash\n")); }
-      else if (cmd === "skills") process.stdout.write([...agent.skills.values()].map((s) => `  ${c.bold(s.name)} — ${c.dim(s.description)}`).join("\n") + "\n" || "  (no skills)\n");
-      else if (cmd === "clear") { agent.reset(); activeSkill = null; process.stdout.write(c.dim("  history cleared\n")); }
+      else if (cmd === "clear") { agent.reset(); process.stdout.write(c.dim("  history cleared\n")); }
       else process.stdout.write(c.red(`  unknown command: /${cmd}\n`));
       continue;
     }

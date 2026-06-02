@@ -1,9 +1,7 @@
 // The agent loop: model <-> tools until the task is done.
 import { chat } from "./provider.mjs";
 import { TOOLS, toolSchemas } from "./tools.mjs";
-import { loadSkills, skillsIndex, loadSkillTool } from "./skills.mjs";
 import { systemPrompt } from "./prompt.mjs";
-import { loadMcpTools } from "./mcp.mjs";
 import { maybeCompact } from "./compact.mjs";
 import { DEFAULT_MODEL, MAX_STEPS } from "./config.mjs";
 
@@ -31,29 +29,13 @@ export function createAgent(opts = {}) {
   const maxSteps = opts.maxSteps || MAX_STEPS;
   const stream = opts.stream || false;
 
-  const skills = loadSkills(cwd);
-  const registry = { ...TOOLS, load_skill: loadSkillTool(skills) };
-  const tools = toolSchemas([registry.load_skill.schema]);
+  const registry = { ...TOOLS };
+  const tools = toolSchemas();
   const ctx = { cwd, onEvent }; // onEvent lets tools (e.g. todo_write) surface UI events
 
   const messages = [
-    { role: "system", content: systemPrompt({ cwd, model, skillsIndexStr: skillsIndex(skills) }) },
+    { role: "system", content: systemPrompt({ cwd, model }) },
   ];
-
-  // Lazily connect to MCP servers (from ~/.taw/mcp.json or .taw/mcp.json) on first turn,
-  // merging their tools into the registry. No servers configured = no overhead. Non-fatal on error.
-  let mcpDone = false;
-  async function ensureMcp() {
-    if (mcpDone) return;
-    mcpDone = true;
-    const mtools = await loadMcpTools(cwd, onEvent).catch(() => []);
-    for (const t of mtools) {
-      if (!registry[t.schema.function.name]) {
-        registry[t.schema.function.name] = t;
-        tools.push(t.schema);
-      }
-    }
-  }
 
   // After an interrupt, the log can end on an assistant tool_calls message whose tool
   // results never got pushed. Most providers reject that. Synthesize the missing results
@@ -75,7 +57,6 @@ export function createAgent(opts = {}) {
   }
 
   async function send(userText, { signal } = {}) {
-    await ensureMcp();
     reconcileToolCalls();
     messages.push({ role: "user", content: userText });
 
@@ -160,6 +141,5 @@ export function createAgent(opts = {}) {
       messages.length = 1; // keep system
     },
     messages,
-    skills,
   };
 }

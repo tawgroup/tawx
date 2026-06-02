@@ -1,7 +1,7 @@
 {
-  "name": "taw-harness",
+  "name": "tawx-harness",
   "version": "0.1.0",
-  "description": "Tiny from-scratch coding agent harness powered by OpenCode Go (cheap models). Inspired by Claude Code's tool-use loop. Zero dependencies, runs on Node 20+ or Bun.",
+  "description": "Tiny PI-inspired coding agent harness with just simple tools and configurable OpenAI-compatible provider support. Zero dependencies, runs on Node 20+ or Bun.",
   "type": "module",
   "bin": {
     "tawx": "bin/taw.mjs"
@@ -15,10 +15,9 @@
   },
   "files": [
     "bin",
-    "src",
-    "skills"
+    "src"
   ],
-  "keywords": ["ai", "coding-agent", "harness", "opencode", "cli", "tui"],
+  "keywords": ["ai", "coding-agent", "harness", "opencode", "claude", "cli", "tui"],
   "license": "MIT",
   "author": "tawgroup"
 }
