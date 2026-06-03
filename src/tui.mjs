@@ -415,7 +415,10 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
     const input = (await askMain(c.magenta("› "))).trim();
     if (!input) continue;
 
-    if (input.startsWith("/")) {
+    // Treat as a slash command only if the first token is a single word — an
+    // absolute file path ("/var/folders/…png", e.g. a pasted image) also starts
+    // with "/" but must go to the agent, not the command parser.
+    if (input.startsWith("/") && !input.slice(1).split(/\s+/)[0].includes("/")) {
       const [cmdRaw, ...rest] = input.slice(1).split(/\s+/);
       const cmd = cmdRaw === "quit" ? "exit" : resolveCommand(cmdRaw);
       if (!cmd) {
