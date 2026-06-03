@@ -5,6 +5,7 @@ import { createAgent } from "./agent.mjs";
 import { c, banner, renderMarkdown, createMdStream } from "./ui.mjs";
 import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD } from "./config.mjs";
 import { listModels } from "./provider.mjs";
+import { saveClipboardImage } from "./clipboard.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
 
 // Live model list for the active provider. Seeded from the hardcoded config list
@@ -228,6 +229,18 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
         if (!key) return;
         const name = key.name;
         if (name === "return" || name === "enter") return; // handled in onLine
+
+        // Ctrl+V: pull an image out of the clipboard, save it to a temp file, and
+        // insert its path at the cursor (terminals can't paste image bytes, so we
+        // read the OS clipboard ourselves — same trick pi uses).
+        if (key.ctrl && name === "v") {
+          const img = saveClipboardImage();
+          if (img) {
+            rl.write(img + " ");            // insert path at cursor
+            if (!pending) { pending = true; setImmediate(recompute); }
+          }
+          return;
+        }
 
         // ↑/↓ drive the dropdown when it's visible…
         if (items.length && (name === "down" || name === "up")) {
