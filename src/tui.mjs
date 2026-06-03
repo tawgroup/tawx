@@ -374,6 +374,16 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
     const rows = process.stdout.rows;
     process.stdout.write(`\x1b[r\x1b[${rows};1H\x1b[2K`); // release region + clear footer line
   };
+  // Some terminals (e.g. VibeTerminal) report their window size LATE — rows is 0
+  // at launch and only set after the first resize. Poll briefly until it's known
+  // so the footer shows up without the user having to resize the window.
+  let footerReady = false;
+  const ensureFooter = (attempt = 0) => {
+    if (footerReady) return;
+    try { process.stdout._refreshSize?.(); } catch { /* ignore */ } // re-read winsize (no SIGWINCH needed)
+    if (footerOn()) { footerReady = true; setupFooter(); return; }
+    if (attempt < 40) setTimeout(() => ensureFooter(attempt + 1), 150); // ~6s
+  };
   const stopSpin = () => {
     if (spin) { clearInterval(spin); spin = null; process.stdout.write("\r\x1b[2K"); }
   };
@@ -473,8 +483,8 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
     );
   }
 
-  setupFooter();
-  process.stdout.on("resize", setupFooter); // re-reserve the bottom row on terminal resize
+  ensureFooter(); // draw now if size is known, else poll until the terminal reports it
+  process.stdout.on("resize", () => { footerReady = true; setupFooter(); }); // re-reserve on resize
   process.on("exit", () => { try { teardownFooter(); } catch { /* ignore */ } }); // never leave a reserved row behind
 
   for (;;) {
