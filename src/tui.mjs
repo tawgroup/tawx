@@ -4,7 +4,7 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
 import { c, banner, renderMarkdown, createMdStream } from "./ui.mjs";
-import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, COMPACT_THRESHOLD } from "./config.mjs";
+import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, contextWindowFor } from "./config.mjs";
 import { listModels } from "./provider.mjs";
 import { saveClipboardImage } from "./clipboard.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
@@ -341,9 +341,10 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       { plain: autoApprove ? "yolo" : "safe", col: autoApprove ? c.yellow("yolo") : c.dim("safe") },
     ];
     if (lastTokens) {
-      const pct = Math.round((lastTokens / COMPACT_THRESHOLD) * 100);
-      segs.push({ plain: `ctx ${fmtK(lastTokens)}/${fmtK(COMPACT_THRESHOLD)} ${pct}%`,
-        col: c.dim(`ctx ${fmtK(lastTokens)}/${fmtK(COMPACT_THRESHOLD)} `) + (pct >= 80 ? c.yellow(`${pct}%`) : c.dim(`${pct}%`)) });
+      const win = contextWindowFor(agent.model);
+      const pct = Math.round((lastTokens / win) * 100);
+      segs.push({ plain: `ctx ${fmtK(lastTokens)}/${fmtK(win)} ${pct}%`,
+        col: c.dim(`ctx ${fmtK(lastTokens)}/${fmtK(win)} `) + (pct >= 80 ? c.yellow(`${pct}%`) : c.dim(`${pct}%`)) });
     }
     if (lastSecs) segs.push({ plain: `${lastSecs.toFixed(1)}s`, col: c.dim(`${lastSecs.toFixed(1)}s`) });
     if (totalCost > 0) segs.push({ plain: `$${totalCost.toFixed(3)}`, col: c.dim(`$${totalCost.toFixed(3)}`) });

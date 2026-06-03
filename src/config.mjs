@@ -152,8 +152,23 @@ export const GO_MODELS = PROVIDERS.opencode.models; // backwards-compatible expo
 
 export const MAX_STEPS = Number(process.env.TAW_MAX_STEPS || 40);
 export const MAX_TOKENS = Number(process.env.TAW_MAX_TOKENS || 8192);
-export const COMPACT_THRESHOLD = Number(process.env.TAW_COMPACT_THRESHOLD || 60000);
 export const REQUEST_TIMEOUT_MS = Number(process.env.TAW_REQUEST_TIMEOUT || 180000);
+
+// ---- Context window per model (tokens) — drives auto-compaction + footer % ----
+// pi-style: compact when used > window - reserve, keeping the last keepTokens.
+const CONTEXT_WINDOWS = [
+  [/gpt-5|codex/i, 272000],
+  [/claude|sonnet|opus|haiku/i, 200000],
+  [/glm|kimi|qwen|deepseek|minimax|mimo|hy3/i, 200000], // opencode models
+];
+export function contextWindowFor(model = "") {
+  if (process.env.TAW_CONTEXT_WINDOW) return Number(process.env.TAW_CONTEXT_WINDOW);
+  for (const [re, n] of CONTEXT_WINDOWS) if (re.test(model)) return n;
+  return 128000; // safe default
+}
+export const COMPACT_RESERVE = Number(process.env.TAW_COMPACT_RESERVE || 16384); // headroom kept free
+export const COMPACT_KEEP_TOKENS = Number(process.env.TAW_COMPACT_KEEP || 20000); // recent tail kept verbatim
+export const COMPACT_ENABLED = process.env.TAW_COMPACT !== "0";
 export const TOOL_OUTPUT_CAP = Number(process.env.TAW_TOOL_CAP || 30000);
 
 export function assertKey() {

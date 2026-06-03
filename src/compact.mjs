@@ -1,54 +1,103 @@
-// Context compaction: when the conversation grows too large, summarize older turns
-// so a long task doesn't overflow the cheap model's context window.
+// Context compaction (pi-style): when the conversation approaches the model's
+// context window, summarize the older prefix and keep the recent tail verbatim.
+// Trigger: used > contextWindow - reserve. Keep: the last ~keepTokens of messages.
 import { chat } from "./provider.mjs";
-import { COMPACT_THRESHOLD } from "./config.mjs";
+import { contextWindowFor, COMPACT_RESERVE, COMPACT_KEEP_TOKENS, COMPACT_ENABLED } from "./config.mjs";
 
-// Rough token estimate (~4 chars/token) over the whole message array.
-export function estimateTokens(messages) {
+const IMAGE_CHARS = 4800; // rough per-image cost (pi uses the same figure)
+
+// Estimate tokens for one message (~4 chars/token; conservative).
+export function estimateMsgTokens(m) {
   let chars = 0;
-  for (const m of messages) {
-    if (typeof m.content === "string") chars += m.content.length;
-    if (m.tool_calls) chars += JSON.stringify(m.tool_calls).length;
+  if (typeof m.content === "string") chars += m.content.length;
+  else if (Array.isArray(m.content)) {
+    for (const p of m.content) chars += p.type === "image" ? IMAGE_CHARS : (p.text?.length || 0);
   }
+  if (m.tool_calls) chars += JSON.stringify(m.tool_calls).length;
   return Math.ceil(chars / 4);
 }
 
-// A tool result must immediately follow its assistant tool_call; never split that pair.
-// We keep [0]=system, summarize the middle, and keep the last `keepRecent` messages —
-// then nudge the cut forward so we never start the kept tail on an orphan "tool" message.
-export async function maybeCompact(messages, { model, signal, onEvent = () => {}, keepRecent = 6 } = {}) {
-  if (!COMPACT_THRESHOLD) return false;
-  if (estimateTokens(messages) < COMPACT_THRESHOLD) return false;
-  if (messages.length <= keepRecent + 3) return false; // too short to bother
+// Estimate tokens for the whole message array.
+export function estimateTokens(messages) {
+  let n = 0;
+  for (const m of messages) n += estimateMsgTokens(m);
+  return n;
+}
 
-  let cut = messages.length - keepRecent;
-  while (cut < messages.length && messages[cut].role === "tool") cut++; // don't orphan a tool result
-  const head = messages[0]; // system
+function renderForSummary(m) {
+  if (m.role === "assistant" && m.tool_calls)
+    return `ASSISTANT called: ${m.tool_calls.map((c) => `${c.function?.name}(${c.function?.arguments || ""})`).join("; ")}` + (m.content ? `\n${m.content}` : "");
+  if (m.role === "tool") return `TOOL RESULT: ${String(m.content).slice(0, 2000)}`;
+  const text = typeof m.content === "string" ? m.content : "(non-text content)";
+  return `${m.role.toUpperCase()}: ${text}`;
+}
+
+const SUMMARY_SYSTEM =
+  "You are a context summarization assistant. Read an AI coding agent's working log and produce a structured checkpoint another LLM will use to continue. Do NOT continue the work or answer questions in it — output ONLY the summary.";
+
+const SUMMARY_FORMAT = `Summarize the work log below into this EXACT format:
+
+## Goal
+[What the user is trying to accomplish.]
+
+## Constraints & Preferences
+- [constraints/preferences, or "(none)"]
+
+## Progress
+### Done
+- [completed changes]
+### In Progress
+- [current work]
+### Blocked
+- [blockers, if any]
+
+## Key Decisions
+- **[decision]**: [why]
+
+## Next Steps
+1. [ordered next actions]
+
+## Critical Context
+- [data/paths/values needed to continue, or "(none)"]
+
+Keep it concise. Preserve EXACT file paths, function names, line numbers, and error messages.`;
+
+// Returns true if it compacted. Mutates `messages` in place.
+export async function maybeCompact(messages, { model, signal, onEvent = () => {}, keepTokens = COMPACT_KEEP_TOKENS } = {}) {
+  if (!COMPACT_ENABLED) return false;
+  const used = estimateTokens(messages);
+  const trigger = contextWindowFor(model) - COMPACT_RESERVE;
+  if (used <= trigger) return false;
+  if (messages.length < 6) return false; // too short to bother
+
+  // Walk backwards from the newest, accumulating tokens, until we've kept ~keepTokens.
+  // `cut` = index of the first KEPT message (everything before it gets summarized).
+  let acc = 0, cut = 1;
+  for (let i = messages.length - 1; i >= 1; i--) {
+    acc += estimateMsgTokens(messages[i]);
+    if (acc >= keepTokens) { cut = i; break; }
+  }
+  // Never start the kept tail on an orphan tool result (its tool_call would be in
+  // the summarized prefix). Move the cut forward past any leading tool messages.
+  while (cut < messages.length && messages[cut].role === "tool") cut++;
+
+  const head = messages[0]; // system prompt
   const middle = messages.slice(1, cut);
   const tail = messages.slice(cut);
-  if (middle.length < 2) return false;
+  if (middle.length < 2) return false; // nothing meaningful to compress
 
-  // Render the middle as plain text for the summarizer.
-  const transcript = middle
-    .map((m) => {
-      if (m.role === "assistant" && m.tool_calls)
-        return `ASSISTANT called: ${m.tool_calls.map((c) => `${c.function?.name}(${c.function?.arguments || ""})`).join("; ")}` + (m.content ? `\n${m.content}` : "");
-      if (m.role === "tool") return `TOOL RESULT: ${String(m.content).slice(0, 1500)}`;
-      return `${m.role.toUpperCase()}: ${m.content}`;
-    })
-    .join("\n\n")
-    .slice(0, 48000);
+  const transcript = middle.map(renderForSummary).join("\n\n").slice(0, 60000);
 
-  onEvent({ type: "compact_start", before: estimateTokens(messages) });
+  onEvent({ type: "compact_start", before: used });
   let summary;
   try {
     const r = await chat({
       model,
       signal,
-      maxTokens: 1500,
+      maxTokens: 2000,
       messages: [
-        { role: "system", content: "You compress an AI coding agent's working log. Produce a dense, factual summary that lets the agent continue without re-reading the original. Keep: the task/goal, concrete findings (file paths, line numbers, values), decisions made, what worked/failed, and what's left to do. Use terse bullet points. No preamble." },
-        { role: "user", content: `Summarize this agent work log so I can continue the task:\n\n${transcript}` },
+        { role: "system", content: SUMMARY_SYSTEM },
+        { role: "user", content: `${SUMMARY_FORMAT}\n\n--- WORK LOG ---\n${transcript}` },
       ],
     });
     summary = r.message?.content?.trim();
@@ -58,10 +107,9 @@ export async function maybeCompact(messages, { model, signal, onEvent = () => {}
   }
   if (!summary) return false;
 
-  // Replace the middle with one synthetic user note carrying the summary.
   messages.splice(0, messages.length,
     head,
-    { role: "user", content: `[Earlier work compacted to save context]\n\n${summary}` },
+    { role: "user", content: `[Earlier conversation compacted to save context]\n\n${summary}` },
     ...tail,
   );
   onEvent({ type: "compact_done", after: estimateTokens(messages) });
