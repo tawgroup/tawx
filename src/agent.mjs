@@ -1,9 +1,38 @@
 // The agent loop: model <-> tools until the task is done.
+import fs from "node:fs";
 import { chat } from "./provider.mjs";
 import { TOOLS, toolSchemas } from "./tools.mjs";
 import { systemPrompt } from "./prompt.mjs";
 import { maybeCompact } from "./compact.mjs";
 import { DEFAULT_MODEL, MAX_STEPS } from "./config.mjs";
+
+const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
+const IMG_MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+
+// If the user's text references local image files (e.g. a path pasted via Ctrl+V),
+// read them, base64-encode, and return a multimodal content array so the model
+// can actually SEE them. No images → returns the plain string (back-compatible).
+function buildUserContent(text) {
+  const images = [];
+  const used = new Set();
+  for (const tok of String(text).split(/\s+/)) {
+    if (!IMG_EXT.test(tok) || used.has(tok)) continue;
+    try {
+      if (fs.existsSync(tok) && fs.statSync(tok).isFile()) {
+        const ext = tok.split(".").pop().toLowerCase();
+        images.push({ type: "image", mime: IMG_MIME[ext] || "image/png", data: fs.readFileSync(tok).toString("base64") });
+        used.add(tok);
+      }
+    } catch { /* not a readable file — leave it as text */ }
+  }
+  if (!images.length) return text;
+  // Strip the recognized image paths from the visible text; keep the rest as the prompt.
+  const rest = String(text).split(/\s+/).filter((t) => !used.has(t)).join(" ").trim();
+  const parts = [];
+  if (rest) parts.push({ type: "text", text: rest });
+  parts.push(...images);
+  return parts;
+}
 
 function safeParse(s) {
   try {
@@ -58,7 +87,7 @@ export function createAgent(opts = {}) {
 
   async function send(userText, { signal } = {}) {
     reconcileToolCalls();
-    messages.push({ role: "user", content: userText });
+    messages.push({ role: "user", content: buildUserContent(userText) });
 
     for (let step = 0; step < maxSteps; step++) {
       // Compact older turns if the conversation has grown too large for the context window.

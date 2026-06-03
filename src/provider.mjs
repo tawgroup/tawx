@@ -67,9 +67,22 @@ async function parseOpenAiStream(res, onToken, bump) {
   return { message, finish_reason, usage, cost };
 }
 
+// Map our neutral content (string | [{type:"text"|"image"}]) to OpenAI's shape.
+function toOpenAi(messages) {
+  return messages.map((m) => {
+    if (!Array.isArray(m.content)) return m;
+    const content = m.content.map((p) =>
+      p.type === "image"
+        ? { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.data}` } }
+        : { type: "text", text: p.text },
+    );
+    return { ...m, content };
+  });
+}
+
 async function chatOpenAi({ messages, tools, model, maxTokens, signal, onToken }) {
   const stream = typeof onToken === "function" && !process.env.TAW_NO_STREAM;
-  const body = { model, messages, max_tokens: maxTokens };
+  const body = { model, messages: toOpenAi(messages), max_tokens: maxTokens };
   if (tools && tools.length) {
     body.tools = tools;
     body.tool_choice = "auto";
@@ -180,7 +193,14 @@ function toAnthropic(messages) {
       out.push({ role: "assistant", content });
       continue;
     }
-    out.push({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") });
+    const content = Array.isArray(m.content)
+      ? m.content.map((p) =>
+          p.type === "image"
+            ? { type: "image", source: { type: "base64", media_type: p.mime, data: p.data } }
+            : { type: "text", text: p.text },
+        )
+      : String(m.content || "");
+    out.push({ role: m.role === "assistant" ? "assistant" : "user", content });
   }
   return { system, messages: out };
 }
@@ -281,11 +301,16 @@ function toCodexInput(messages) {
       }
       continue;
     }
-    input.push({
-      type: "message",
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: [{ type: m.role === "assistant" ? "output_text" : "input_text", text: String(m.content || "") }],
-    });
+    const role = m.role === "assistant" ? "assistant" : "user";
+    const textType = role === "assistant" ? "output_text" : "input_text";
+    const content = Array.isArray(m.content)
+      ? m.content.map((p) =>
+          p.type === "image"
+            ? { type: "input_image", image_url: `data:${p.mime};base64,${p.data}` }
+            : { type: textType, text: p.text },
+        )
+      : [{ type: textType, text: String(m.content || "") }];
+    input.push({ type: "message", role, content });
   }
   return { instructions, input };
 }
