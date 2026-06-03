@@ -202,6 +202,9 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       let items = [];     // current { value, label } suggestions
       let sel = -1;       // highlighted index, -1 = nothing selected (Enter runs typed text)
       let hpos = inputHist.length; // cursor into inputHist for ↑/↓ recall
+      let pasting = false;   // inside a bracketed paste (ESC[200~ … ESC[201~)
+      let pasteParts = [];   // lines captured while pasting (readline submits each \n)
+      let realWrite = null;  // saved process.stdout.write while we mute echo during a paste
 
       const draw = () => {
         process.stdout.write("\x1b7");      // save cursor (at the input position)
@@ -228,6 +231,30 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       const onKey = (_str, key) => {
         if (!key) return;
         const name = key.name;
+
+        // Bracketed paste: terminal wraps pasted text in paste-start/paste-end.
+        // readline still fires `line` on every embedded newline, so we mute echo,
+        // collect the pieces, and rebuild them into ONE input on paste-end —
+        // a multi-line paste must NOT submit until the user hits Enter for real.
+        if (name === "paste-start") {
+          pasting = true; pasteParts = [];
+          realWrite = process.stdout.write.bind(process.stdout);
+          process.stdout.write = (chunk, enc, cb) => { const f = typeof enc === "function" ? enc : cb; if (typeof f === "function") f(); return true; };
+          return;
+        }
+        if (name === "paste-end") {
+          pasting = false;
+          if (realWrite) { process.stdout.write = realWrite; realWrite = null; }
+          // join captured lines + the trailing segment still in the buffer;
+          // collapse whitespace so it stays one editable line (newlines → space).
+          const full = [...pasteParts, rl.line].join(" ").replace(/[ \t]*\n[ \t]*/g, " ").replace(/\s+/g, " ").trim();
+          pasteParts = [];
+          setLine(full);
+          if (!pending) { pending = true; setImmediate(recompute); }
+          return;
+        }
+        if (pasting && (name === "return" || name === "enter")) return; // swallow during paste
+
         if (name === "return" || name === "enter") return; // handled in onLine
 
         // Ctrl+V: pull an image out of the clipboard, save it to a temp file, and
@@ -269,6 +296,8 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       };
 
       const onLine = (line) => {
+        // An embedded newline inside a paste — capture it, don't submit yet.
+        if (pasting) { pasteParts.push(line); return; }
         process.stdin.removeListener("keypress", onKey);
         rl.removeListener("line", onLine);
         process.stdout.write("\x1b[J");     // wipe the suggestion block beneath the input
@@ -363,12 +392,14 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       if (mdStream) { mdStream.end(); mdStream = null; }
       process.stdout.write(c.yellow("\n  ⎋ interrupting…\n"));
     } else {
+      process.stdout.write("\x1b[?2004l"); // disable bracketed paste
       rl.close();
       process.stdout.write(c.dim("\nbye 👋\n"));
       process.exit(0);
     }
   });
 
+  process.stdout.write("\x1b[?2004h"); // enable bracketed paste so multi-line pastes don't auto-submit
   process.stdout.write(banner(`${agent.model} · ${PROVIDER} · yolo`, VERSION));
 
   // Show an update notice (bounded wait so it never lands mid-input and corrupts
@@ -435,6 +466,7 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
       aborter = null;
     }
   }
+  process.stdout.write("\x1b[?2004l"); // disable bracketed paste
   rl.close();
   process.stdout.write(c.dim("bye 👋\n"));
 }
