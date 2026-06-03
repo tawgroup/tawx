@@ -1,9 +1,10 @@
 // Interactive terminal UI (readline + ANSI). Chat-style, with streaming, tool rendering + approval.
 import readline from "node:readline";
+import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
 import { c, banner, renderMarkdown, createMdStream } from "./ui.mjs";
-import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD } from "./config.mjs";
+import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, COMPACT_THRESHOLD } from "./config.mjs";
 import { listModels } from "./provider.mjs";
 import { saveClipboardImage } from "./clipboard.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
@@ -317,6 +318,28 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
   let spin = null;
   let turnStart = 0;        // wall-clock of the current model turn
   let mdStream = null;      // streaming markdown renderer for the current assistant message
+  let lastTokens = 0;       // total_tokens of the last turn ≈ current context size
+  let lastSecs = 0;         // last response time
+  let totalCost = 0;        // cumulative cost this session
+
+  // A compact PI-style status line printed just above each prompt — so as the
+  // chat scrolls, the key info (where you are, model, context use) stays in view.
+  const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
+  const statusLine = () => {
+    const home = os.homedir();
+    let dir = process.cwd();
+    if (dir === home) dir = "~"; else if (dir.startsWith(home + "/")) dir = "~" + dir.slice(home.length);
+    const sep = c.dim(" · ");
+    const parts = [c.cyan(dir), c.dim(`${agent.model} · ${PROVIDER}`), autoApprove ? c.yellow("yolo") : c.dim("safe")];
+    if (lastTokens) {
+      const pct = Math.round((lastTokens / COMPACT_THRESHOLD) * 100);
+      const ctx = `ctx ${fmtK(lastTokens)}/${fmtK(COMPACT_THRESHOLD)} `;
+      parts.push(c.dim(ctx) + (pct >= 80 ? c.yellow(pct + "%") : c.dim(pct + "%")));
+    }
+    if (lastSecs) parts.push(c.dim(`${lastSecs.toFixed(1)}s`));
+    if (totalCost > 0) parts.push(c.dim(`$${totalCost.toFixed(3)}`));
+    return "  " + parts.join(sep);
+  };
   const stopSpin = () => {
     if (spin) { clearInterval(spin); spin = null; process.stdout.write("\r\x1b[2K"); }
   };
@@ -358,7 +381,10 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
           break;
         case "usage":
           if (ev.usage?.total_tokens) {
-            const secs = turnStart ? `, ${((Date.now() - turnStart) / 1000).toFixed(1)}s` : "";
+            lastTokens = ev.usage.total_tokens;
+            lastSecs = turnStart ? (Date.now() - turnStart) / 1000 : 0;
+            if (ev.cost != null) totalCost += Number(ev.cost) || 0;
+            const secs = lastSecs ? `, ${lastSecs.toFixed(1)}s` : "";
             process.stdout.write(c.gray(`    · ${ev.usage.total_tokens} tok` + (ev.cost != null ? `, cost ${ev.cost}` : "") + secs) + "\n");
           }
           break;
@@ -412,6 +438,7 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
   }
 
   for (;;) {
+    process.stdout.write(statusLine() + "\n");
     const input = (await askMain(c.magenta("› "))).trim();
     if (!input) continue;
 
