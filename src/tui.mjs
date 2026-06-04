@@ -320,8 +320,10 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
           return;
         }
         // Tab / → accepts the highlighted item into the line (then re-suggest).
-        if (sel >= 0 && (name === "tab" || name === "right")) {
-          setLine(items[sel].value);
+        // The strip highlights the first item by default (sel === -1), so Tab/→
+        // accept that one too — matching what the user sees as selected.
+        if (items.length && (name === "tab" || name === "right")) {
+          setLine(items[sel >= 0 ? sel : 0].value);
           sel = -1;
           if (!pending) { pending = true; setImmediate(recompute); }
           return;
