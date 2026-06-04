@@ -379,8 +379,10 @@ export async function runTui({ model = DEFAULT_MODEL } = {}) {
     const home = os.homedir();
     let dir = process.cwd();
     if (dir === home) dir = "~"; else if (dir.startsWith(home + "/")) dir = "~" + dir.slice(home.length);
+    const sid = `#${sessionId.slice(-4)}`; // conversation id (matches the header + the ~/.taw/sessions filename tail)
     const segs = [
       { plain: dir, col: c.accent(dir) },
+      { plain: sid, col: c.muted(sid) },
       { plain: agent.model, col: c.soft(agent.model) },
       { plain: PROVIDER, col: c.muted(PROVIDER) },
       { plain: autoApprove ? "YOLO" : "safe", col: autoApprove ? c.amber("YOLO") : c.muted("safe") },
