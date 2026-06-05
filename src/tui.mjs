@@ -160,28 +160,23 @@ async function tuiUse(providerName, modelArg, ask) {
   restartTui();
 }
 
-const HELP = `
-${c.bold("Commands:")}
-  /help            show help
-  /tree            jump back to / branch from an earlier turn (clean context)
-  /resume          pick a saved conversation to reopen and continue
-  /login [name]    login provider in TUI: opencode | codex | claude
-  /use <name>      switch provider in TUI and restart
-  /model <id>      switch model for this TUI session (e.g. /model qwen3.6-plus)
-  /models          list models for active provider
-  /whoami          show active provider/model
-  /yolo            auto-approve every action (default)
-  /safe            ask before write/edit/bash
-  /clear           clear conversation history
-  /exit            quit
+const HELP = `${c.faint("/help — show help")}
 
-  Live suggest     type / and matches show under the input as you type
-  ↑/↓              move through the suggestion list (Enter picks the highlighted one)
-  Tab / →          accept the highlighted suggestion into the input
-  Prefixes work   e.g. /lo = /login, /wh = /whoami when unique
-  ↑/↓ (no list)    recall previous inputs
-  Ctrl-C           interrupt the running turn (press again when idle to quit)
-`;
+${c.muted("Available commands:")}
+  ${c.bold("/help")}     ${c.faint("Show help")}
+  ${c.bold("/model")}    ${c.faint("Switch model for this session")}
+  ${c.bold("/models")}   ${c.faint("List models for the active provider")}
+  ${c.bold("/login")}    ${c.faint("Add / switch provider")}
+  ${c.bold("/use")}      ${c.faint("Switch provider and restart")}
+  ${c.bold("/whoami")}   ${c.faint("Show active provider / model")}
+  ${c.bold("/tree")}     ${c.faint("Jump back to / branch an earlier turn")}
+  ${c.bold("/resume")}   ${c.faint("Reopen a saved conversation")}
+  ${c.bold("/yolo")}     ${c.faint("Auto-approve every action (default)")}
+  ${c.bold("/safe")}     ${c.faint("Ask before write / edit / bash")}
+  ${c.bold("/clear")}    ${c.faint("Clear conversation history")}
+  ${c.bold("/exit")}     ${c.faint("Quit tawx")}
+
+${c.muted("Keys:")}  ${c.faint("↑/↓ recall · type / for live suggestions · Tab/→ accept · Ctrl-C interrupt")}`;
 
 export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   // historySize:0 hands ↑/↓ to us — we drive the suggestion dropdown with them
@@ -450,7 +445,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         }
         case "assistant_delta":
           if (!mdStream) {
-            process.stdout.write("\n  " + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n");
+            process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n");
             mdStream = createMdStream(indentWriter());
           }
           mdStream.push(ev.text);
@@ -459,7 +454,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
           if (mdStream) { mdStream.end(); mdStream = null; }
           else if (ev.text?.trim()) {
             const body = renderMarkdown(ev.text.trim()).replace(/\n/g, "\n  ");
-            process.stdout.write("\n  " + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
+            process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
           }
           break;
         case "tool_call": {
@@ -706,7 +701,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         const t = textOf(m.content).trim();
         if (t) {
           const body = renderMarkdown(t).replace(/\n/g, "\n  ");
-          process.stdout.write("\n  " + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
+          process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
         }
         if (m.tool_calls?.length) {
           const names = m.tool_calls.map((tc) => tc.function?.name).filter(Boolean).join(", ");
