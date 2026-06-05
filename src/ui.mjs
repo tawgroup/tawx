@@ -30,6 +30,19 @@ export const c = {
 // Visible length of a string, ignoring ANSI escape sequences.
 export const visLen = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "").length;
 
+// pi dark-theme background tones (from pi's dark.json): card = tool/output panels,
+// info = system notices, bar = the status footer band.
+export const BG = { card: [30, 30, 36], info: [60, 55, 40], bar: [36, 36, 48] };
+
+// Fill a line's background to `cols` visible columns — the pi "card/panel" look.
+// Inner fg colors reset with 39m (not 0m) so the background persists; we close 49m.
+export function bgLine(content, cols, rgb = BG.card) {
+  const pad = Math.max(0, cols - visLen(content));
+  if (!useColor) return content + " ".repeat(pad);
+  const [r, g, b] = rgb;
+  return `\x1b[48;2;${r};${g};${b}m` + content + " ".repeat(pad) + "\x1b[49m";
+}
+
 // Lay out a left and right segment on one line padded to `cols` wide.
 function justify(left, right, cols) {
   const gap = Math.max(1, cols - visLen(left) - visLen(right));
