@@ -5,6 +5,7 @@ import path from "node:path";
 import assert from "node:assert";
 import { TOOLS } from "../src/tools.mjs";
 import { loadProjectContext, systemPrompt } from "../src/prompt.mjs";
+import { renderMarkdown } from "../src/ui.mjs";
 import { API_KEY, DEFAULT_MODEL, PROVIDER } from "../src/config.mjs";
 import { createAgent } from "../src/agent.mjs";
 

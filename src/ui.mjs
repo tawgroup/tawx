@@ -45,9 +45,12 @@ export function banner({ version = "", cwd = "", session = "", cols = 80 } = {})
   return "\n" + justify(logo, right + "  ", w) + "\n" + rule + "\n";
 }
 
-// ---- Markdown → ANSI (zero-dep): headings, bold, italic, inline code, bullets, fences, links ----
+// ---- Markdown → ANSI (zero-dep), styled after pi's renderer: headings by level,
+// blockquotes, horizontal rules, ordered/unordered lists, code fences, inline
+// code/bold/italic/strikethrough/links. Stays line-based so it streams.
 function renderInline(s) {
   s = s.replace(/`([^`]+)`/g, (_, t) => c.cyan(t));
+  s = s.replace(/~~([^~]+)~~/g, (_, t) => c.dim(c.gray(t)));
   s = s.replace(/\*\*([^*]+)\*\*/g, (_, t) => c.bold(t));
   s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_, a, t) => a + c.italic(t));
   s = s.replace(/(^|[^_\w])_([^_\n]+)_(?![_\w])/g, (_, a, t) => a + c.italic(t));
@@ -55,16 +58,39 @@ function renderInline(s) {
   return s;
 }
 
+const hrWidth = () => Math.min((process.stdout.columns || 80) - 4, 56);
+
 // A stateful per-line renderer (carries fenced-code-block state across lines).
 // Returns a function(line) -> rendered string, or null for lines to drop (fence markers).
 function lineRenderer() {
   let inFence = false;
   return (line) => {
+    // Fenced code: keep a subtle gutter (pi indents + dims the block body).
     if (/^\s*```/.test(line)) { inFence = !inFence; return null; }
-    if (inFence) return c.dim("  │ ") + c.cyan(line);
+    if (inFence) return c.faint("│ ") + c.cyan(line);
+
+    // Horizontal rule: --- / *** / ___ alone on a line → a thin faint divider.
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) return c.faint("─".repeat(hrWidth()));
+
+    // Headings by level: H1 underlined+bold, H2 bold, H3+ keep a dim "#" prefix.
     const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
-    if (h) return c.bold(c.yellow(h[2]));
-    line = line.replace(/^(\s*)[-*]\s+/, (_, sp) => sp + c.yellow("• "));
+    if (h) {
+      const lvl = h[1].length, txt = renderInline(h[2]);
+      if (lvl === 1) return c.bold(c.underline(c.brand(txt)));
+      if (lvl === 2) return c.bold(c.brand(txt));
+      return c.faint("#".repeat(lvl) + " ") + c.bold(c.soft(txt));
+    }
+
+    // Blockquote: pi-style "│ " border in a muted tone.
+    const q = line.match(/^\s*>\s?(.*)$/);
+    if (q) return c.faint("│ ") + c.muted(renderInline(q[1]));
+
+    // Ordered list: keep the number, tint the marker.
+    const ol = line.match(/^(\s*)(\d+)([.)])\s+(.*)$/);
+    if (ol) return ol[1] + c.soft(ol[2] + ol[3]) + " " + renderInline(ol[4]);
+
+    // Unordered list: -, *, + → a tinted bullet (indentation preserved for nesting).
+    line = line.replace(/^(\s*)[-*+]\s+/, (_, sp) => sp + c.yellow("• "));
     return renderInline(line);
   };
 }
