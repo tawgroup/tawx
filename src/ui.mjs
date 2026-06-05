@@ -42,7 +42,10 @@ export function banner({ version = "", cwd = "", session = "", cols = 80 } = {})
   const logo = "  " + c.bold(c.brand("◢◣ tawx")) + (version ? "  " + c.faint("v" + version) : "");
   const right = (cwd ? c.muted(cwd) : "") + (session ? c.faint(`  ·  ${session}`) : "");
   const rule = "  " + c.faint("─".repeat(Math.max(0, w - 4)));
-  return "\n" + justify(logo, right + "  ", w) + "\n" + rule + "\n";
+  // pi-style one-line shortcut hint under the rule.
+  const hint = "  " + c.faint("/ commands") + c.faint(" · ") + c.faint("↑↓ recall")
+    + c.faint(" · ") + c.faint("ctrl-c interrupt") + c.faint(" · ") + c.faint("ctrl-c again to exit");
+  return "\n" + justify(logo, right + "  ", w) + "\n" + rule + "\n" + hint + "\n";
 }
 
 // ---- Markdown → ANSI (zero-dep), styled after pi's renderer: headings by level,
