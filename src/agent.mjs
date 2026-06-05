@@ -129,16 +129,17 @@ export function createAgent(opts = {}) {
           plan.push({ call, content: !tool ? `ERROR: no such tool "${name}"` : "ERROR: arguments are not valid JSON" });
           continue;
         }
-        onEvent({ type: "tool_call", name, preview: tool.preview ? tool.preview(args) : "" });
+        const preview = tool.preview ? tool.preview(args) : "";
+        onEvent({ type: "tool_call", id: call.id, name, preview });
         if (tool.needsApproval) {
-          const ok = await approve(name, args, tool.preview ? tool.preview(args) : "");
+          const ok = await approve(name, args, preview);
           if (!ok) {
             onEvent({ type: "tool_denied", name });
             plan.push({ call, content: "The user DENIED running this tool. Try another approach or ask." });
             continue;
           }
         }
-        plan.push({ call, name, tool, args, run: true });
+        plan.push({ call, name, tool, args, preview, run: true });
       }
 
       // Phase 2 — run the approved tools IN PARALLEL (like pi). Independent
@@ -146,6 +147,7 @@ export function createAgent(opts = {}) {
       await Promise.all(
         plan.filter((p) => p.run).map(async (p) => {
           try {
+            onEvent({ type: "tool_start", id: p.call.id, name: p.name, preview: p.preview });
             p.result = await p.tool.run(p.args, ctx);
           } catch (e) {
             p.result = `ERROR running tool: ${e.message}`;
@@ -157,7 +159,7 @@ export function createAgent(opts = {}) {
       // line up with the assistant's call order regardless of finish order).
       for (const p of plan) {
         if (p.run) {
-          onEvent({ type: "tool_result", name: p.name, result: p.result });
+          onEvent({ type: "tool_result", id: p.call.id, name: p.name, result: p.result });
           messages.push({ role: "tool", tool_call_id: p.call.id, content: String(p.result) });
         } else {
           messages.push({ role: "tool", tool_call_id: p.call.id, content: p.content });

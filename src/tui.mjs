@@ -369,6 +369,8 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
 
   let autoApprove = true;
   let spin = null;
+  let toolSpin = null;
+  let toolSpinStarted = 0;
   let turnStart = 0;        // wall-clock of the current model turn
   let mdStream = null;      // streaming markdown renderer for the current assistant message
   let lastTokens = 0;       // total_tokens of the last turn ≈ current context size
@@ -416,6 +418,26 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     if (spin) { clearInterval(spin); spin = null; process.stdout.write("\r\x1b[2K"); }
   };
 
+  const stopToolSpin = () => {
+    if (toolSpin) { clearInterval(toolSpin); toolSpin = null; process.stdout.write("\r\x1b[2K"); }
+  };
+
+  const startToolSpin = (name, preview) => {
+    stopToolSpin();
+    if (!process.stdout.isTTY) return;
+    const w = panelW();
+    const frames = name === "bash" ? ["🦖💨", " 🦖💨", "  🦖💨", "   🦖💨", "  🦖💨", " 🦖💨"] : ["☕", "☕.", "☕..", "☕..."];
+    const verb = name === "bash" ? "running bash" : `running ${name}`;
+    const short = String(preview || "").split("\n")[0].replace(/\s+/g, " ").slice(0, 54);
+    let i = 0; toolSpinStarted = Date.now();
+    toolSpin = setInterval(() => {
+      const secs = Math.floor((Date.now() - toolSpinStarted) / 1000);
+      const text = `${frames[i++ % frames.length]} ${verb} · ${secs}s${short ? " · " + short : ""}`;
+      const msg = ` ${c.faint("▎")} ${c.muted(text)}`;
+      process.stdout.write("\r" + PANEL_PAD + bgLine(msg, w, BG.card));
+    }, 180);
+  };
+
   // Writer that indents every line of streamed assistant output by 2 spaces, so
   // the answer reads as an indented block under the "◆ tawx" label.
   const indentWriter = () => {
@@ -436,6 +458,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     stream: true,
     onEvent(ev) {
       if (ev.type !== "thinking") stopSpin();
+      if (ev.type !== "tool_start") stopToolSpin();
       switch (ev.type) {
         case "thinking": {
           turnStart = Date.now();
@@ -464,6 +487,10 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
           process.stdout.write(PANEL_PAD + bgLine(" " + c.soft("▌") + " " + c.bold(c.soft(ev.name)) + c.faint("  " + prev), w, BG.card) + "\n");
           break;
         }
+        case "tool_start":
+          startToolSpin(ev.name, ev.preview);
+          break;
+
         case "tool_result": {
           // Result body inside the same card: a faint left rail per line, bg-filled.
           const w = panelW();
@@ -818,6 +845,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     if (aborter) {
       aborter.abort();
       stopSpin();
+      stopToolSpin();
       if (mdStream) { mdStream.end(); mdStream = null; }
       process.stdout.write(c.yellow("\n  ⎋ interrupting…\n"));
     } else {
