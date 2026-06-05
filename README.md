@@ -16,15 +16,25 @@ tawx login      # pick provider: opencode / codex / claude
 
 ## Use
 
+Open the interactive TUI:
+
 ```bash
-tawx                                          # interactive TUI
-tawx run "write a python fibonacci and run it"
-tawx build "todo API in node http" --verify "node --test test.mjs"
-tawx models
-tawx whoami
+tawx
 ```
 
-TUI: `/model <id>` · `/models` · `/yolo` · `/safe` · `/clear` · `/exit` · `Ctrl-C` to interrupt.
+Useful TUI commands:
+
+```text
+/model <id>   switch model
+/models       list models
+/yolo         auto-approve tool use
+/safe         ask before risky tools
+/clear        clear conversation
+/exit         quit
+Ctrl-C        interrupt
+```
+
+Other helpers: `tawx models` · `tawx whoami`
 
 ## Tools
 
