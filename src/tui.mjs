@@ -231,14 +231,19 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
           process.stdout.write(at(COMPOSER_ROW(), COMPOSER_PROMPT_W + (rl.cursor || 0) + 1));
           return;
         }
+        // Inline REPL: draw ONLY the live slash-command suggestions below the
+        // prompt (transient — wiped on the next keystroke / on submit). We never
+        // draw the status line here: writing it below the prompt left orphaned
+        // copies in the scrollback once the prompt sat at the bottom row and the
+        // \n scrolled the screen. The status now lives only in the header.
+        if (!items.length) {
+          process.stdout.write("\x1b7\n\x1b[J\x1b8"); // clear any leftover suggestion block
+          return;
+        }
         process.stdout.write("\x1b7");      // save cursor (at the input position)
         process.stdout.write("\n\x1b[J");   // drop below input, clear everything beneath
-        const out = [];
-        if (items.length) {
-          out.push(...items.slice(0, MAX_SUGGEST).map((it, i) =>
-            i === sel ? c.accent("❯ ") + c.inverse(" " + it.label + " ") : "  " + it.label));
-        }
-        out.push(statusLine((process.stdout.columns || 80) - 1)); // footer, always last
+        const out = items.slice(0, MAX_SUGGEST).map((it, i) =>
+          i === sel ? c.accent("❯ ") + c.inverse(" " + it.label + " ") : "  " + it.label);
         process.stdout.write(out.join("\n"));
         process.stdout.write("\x1b8");      // restore cursor back to the input
       };
