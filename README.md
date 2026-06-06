@@ -2,6 +2,8 @@
 
 A simple coding-agent harness. A model, a short loop, a few local tools — that's it. No Skills, no MCP, no plugins. Zero deps, Node 20+ or Bun.
 
+![tawx command cheat sheet](assets/tawx-cheatsheet.png)
+
 ## Install
 
 ```bash
