@@ -48,6 +48,18 @@ assert.ok(meFail.startsWith("ERROR") && meFail.includes("#2"), "multi_edit fails
 assert.equal(fs.readFileSync(path.join(tmp, "m2.txt"), "utf8"), "keep this", "multi_edit writes nothing on failure");
 ok("multi_edit (atomic rollback)");
 
+// update_plan: writes the checklist into ctx.plan and emits a plan event.
+let planEvent = null;
+const planCtx = { cwd: tmp, onEvent: (e) => { if (e.type === "plan") planEvent = e; } };
+const up = await TOOLS.update_plan.run(
+  { plan: [{ step: "Read schema", status: "done" }, { step: "Add field", status: "in_progress" }, { step: "Write test", status: "pending" }] },
+  planCtx,
+);
+assert.ok(up.includes("[x] Read schema") && up.includes("[→] Add field") && up.includes("[ ] Write test"), "update_plan renders checklist");
+assert.equal(planCtx.plan.length, 3, "plan stored on ctx");
+assert.ok(planEvent && planEvent.items.length === 3, "update_plan emits a plan event");
+ok("update_plan (checklist + event)");
+
 const d = await TOOLS.diff.run({ path: "a.txt", old_string: "taw", new_string: "TAW" }, ctx);
 assert.ok(d.includes("--- a/a.txt") && d.includes("+TAW"), "diff previews replacement");
 ok("diff preview");

@@ -37,6 +37,13 @@ const headlessEvents = {
     else if (ev.type === "tool_result") process.stderr.write(c.dim(String(ev.result).split("\n").slice(0, 3).join("\n").slice(0, 240)) + "\n");
     else if (ev.type === "max_steps") process.stderr.write(c.yellow("⚠ reached step limit\n"));
     else if (ev.type === "compact_done") process.stderr.write(c.dim(`♻ compacted context → ~${ev.after} tok\n`));
+    else if (ev.type === "plan") {
+      process.stderr.write(c.dim("▌ plan\n"));
+      for (const it of ev.items || []) {
+        const mark = it.status === "done" ? "✓" : it.status === "in_progress" ? "▸" : "○";
+        process.stderr.write(c.dim(`  ${mark} ${it.step}\n`));
+      }
+    }
   },
 };
 

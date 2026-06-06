@@ -578,6 +578,18 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         case "compact_done":
           process.stdout.write("  " + c.faint(`♻ compacted → ~${ev.after} tok`) + "\n");
           break;
+        case "plan": {
+          // Render the checklist as a small card: ✓ done, ▸ in-progress, ○ pending.
+          const w = panelW();
+          process.stdout.write(PANEL_PAD + bgLine(" " + c.soft("▌") + " " + c.bold(c.soft("plan")), w, BG.card) + "\n");
+          for (const it of ev.items || []) {
+            const mark =
+              it.status === "done" ? c.green("✓") : it.status === "in_progress" ? c.amber("▸") : c.faint("○");
+            const txt = it.status === "done" ? c.faint(it.step) : it.status === "in_progress" ? c.bold(it.step) : c.muted(it.step);
+            process.stdout.write(PANEL_PAD + bgLine(" " + c.faint("▎") + " " + mark + " " + txt.slice(0, w - 6), w, BG.card) + "\n");
+          }
+          break;
+        }
       }
     },
     async approve(name, args, preview) {

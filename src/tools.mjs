@@ -12,6 +12,13 @@ const cap = (s) =>
 
 const resolve = (ctx, p) => (path.isAbsolute(p) ? p : path.join(ctx.cwd, p));
 
+// Render a plan ([{step, status}]) as a checklist. Shared by the update_plan
+// tool's result and the agent's pinned-plan reminder.
+const PLAN_MARK = { done: "[x]", in_progress: "[→]", pending: "[ ]" };
+export function renderPlan(plan = []) {
+  return plan.map((p) => `${PLAN_MARK[p.status] || "[ ]"} ${p.step}`).join("\n");
+}
+
 // Directories we never descend into for glob/grep — keeps cheap models from drowning
 // in dependency/build noise (and saves tokens). bash can still reach them explicitly.
 const IGNORE_DIRS = new Set([
@@ -604,6 +611,50 @@ export const TOOLS = {
       } finally {
         clearTimeout(timer);
       }
+    },
+  },
+
+  update_plan: {
+    schema: {
+      type: "function",
+      function: {
+        name: "update_plan",
+        description:
+          "Maintain a short checklist for a MULTI-STEP task so you don't lose track across turns. " +
+          "Pass the FULL list every call with each step's current status — it replaces the previous plan. " +
+          "Keep exactly ONE step 'in_progress' at a time; flip it to 'done' before starting the next. " +
+          "SKIP this entirely for simple questions or one/two-step tasks — only use it when a task has several real steps.",
+        parameters: {
+          type: "object",
+          properties: {
+            plan: {
+              type: "array",
+              description: "the full ordered checklist; replaces any previous plan",
+              items: {
+                type: "object",
+                properties: {
+                  step: { type: "string", description: "short imperative description, e.g. 'Add refreshToken to schema'" },
+                  status: { type: "string", enum: ["pending", "in_progress", "done"] },
+                },
+                required: ["step", "status"],
+              },
+            },
+          },
+          required: ["plan"],
+        },
+      },
+    },
+    needsApproval: false,
+    preview: (a) => `${Array.isArray(a.plan) ? a.plan.length : 0} steps`,
+    async run(a, ctx) {
+      if (!Array.isArray(a.plan)) return "ERROR: plan must be an array";
+      const allowed = new Set(["pending", "in_progress", "done"]);
+      ctx.plan = a.plan.map((p) => ({
+        step: String(p?.step || "").slice(0, 200),
+        status: allowed.has(p?.status) ? p.status : "pending",
+      }));
+      ctx.onEvent?.({ type: "plan", items: ctx.plan });
+      return "OK: plan updated\n" + renderPlan(ctx.plan);
     },
   },
 

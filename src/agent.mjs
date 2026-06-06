@@ -1,7 +1,7 @@
 // The agent loop: model <-> tools until the task is done.
 import fs from "node:fs";
 import { chat } from "./provider.mjs";
-import { TOOLS, toolSchemas } from "./tools.mjs";
+import { TOOLS, toolSchemas, renderPlan } from "./tools.mjs";
 import { systemPrompt } from "./prompt.mjs";
 import { maybeCompact } from "./compact.mjs";
 import { DEFAULT_MODEL, MAX_STEPS } from "./config.mjs";
@@ -60,11 +60,32 @@ export function createAgent(opts = {}) {
 
   const registry = { ...TOOLS };
   const tools = toolSchemas();
-  const ctx = { cwd, onEvent };
+  // ctx.plan is the source of truth for the checklist. The update_plan tool writes
+  // here; the loop re-pins a fresh copy at the end of context each turn (below).
+  const ctx = { cwd, onEvent, plan: [] };
 
   const messages = [
     { role: "system", content: systemPrompt({ cwd, model }) },
   ];
+
+  // Plan "pinning": the live plan lives in ctx.plan, NOT as a permanent message.
+  // Each turn we strip last turn's pinned copy and append a fresh one at the very
+  // end, so the checklist is always current, always in view, and survives compaction
+  // (it's regenerated from ctx.plan rather than summarized away).
+  const PIN = "__pinnedPlan";
+  function stripPin() {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i][PIN]) messages.splice(i, 1);
+  }
+  function pinPlan() {
+    if (!ctx.plan?.length) return;
+    messages.push({
+      role: "user",
+      [PIN]: true,
+      content:
+        "[Current plan — keep this updated via update_plan as you finish each step]\n" +
+        renderPlan(ctx.plan),
+    });
+  }
 
   // After an interrupt, the log can end on an assistant tool_calls message whose tool
   // results never got pushed. Most providers reject that. Synthesize the missing results
@@ -86,12 +107,15 @@ export function createAgent(opts = {}) {
   }
 
   async function send(userText, { signal } = {}) {
+    stripPin();              // ephemeral; never let a stale pin linger into a new turn
     reconcileToolCalls();
     messages.push({ role: "user", content: buildUserContent(userText) });
 
     for (let step = 0; step < maxSteps; step++) {
+      stripPin();            // remove last step's pin before compaction sees it
       // Compact older turns if the conversation has grown too large for the context window.
       await maybeCompact(messages, { model, signal, onEvent });
+      pinPlan();             // re-pin the live checklist at the very end of context
       onEvent({ type: "thinking", model });
       const { message, finish_reason, usage, cost } = await chat({
         messages,
@@ -114,6 +138,7 @@ export function createAgent(opts = {}) {
       onEvent({ type: "usage", usage, cost });
 
       if (!calls.length) {
+        stripPin();          // don't persist the ephemeral pin into the saved session
         onEvent({ type: "done" });
         return message.content || "";
       }
@@ -166,6 +191,7 @@ export function createAgent(opts = {}) {
         }
       }
     }
+    stripPin();
     onEvent({ type: "max_steps" });
     return "(reached step limit)";
   }
