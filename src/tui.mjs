@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
+import { walkFiles } from "./tools.mjs";
 import { c, banner, renderMarkdown, createMdStream, bgLine, BG, visLen } from "./ui.mjs";
 import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, contextWindowFor, TAWX_DIR, listSessions, loadSession } from "./config.mjs";
 import { listModels } from "./provider.mjs";
@@ -16,9 +17,11 @@ import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
 // available (see refreshModels in runTui). All model UI reads from here.
 let modelList = [...MODELS];
 
-const COMMANDS = ["/help", "/tree", "/resume", "/login", "/use", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
+const COMMANDS = ["/help", "/new", "/session", "/tree", "/resume", "/login", "/use", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
 const COMMAND_DESC = {
   "/help": "show help",
+  "/new": "start a fresh conversation (keeps the current one saved)",
+  "/session": "show this conversation's id, file, model, tokens & cost",
   "/tree": "browse the conversation timeline — jump back to any You/tawx point & branch",
   "/resume": "reopen a saved conversation and keep chatting",
   "/login": "login provider inside TUI",
@@ -44,12 +47,63 @@ function showModelSuggestions(prefix = "") {
   return list.map((m) => `  ${c.bold(m)}`).join("\n") + "\n";
 }
 
-// Suggestions to draw live under the input as the user types a slash command.
-// Each item is { value, label }: `value` is what gets run if picked, `label` is
-// the (already-colored) text shown. Returns [] when there's nothing to suggest.
+// ---- `@file` reference picker --------------------------------------------
+// Typing `@partial` fuzzy-searches project files and inserts the picked path
+// into the prompt (the model then read_file's it). Reuses the agent's own
+// walkFiles ignore rules so we don't drown in node_modules/build noise. The
+// file list is collected lazily on first use and cached for the session.
+let _fileCache = null;
+function projectFiles() {
+  if (_fileCache) return _fileCache;
+  try { _fileCache = walkFiles(process.cwd()); } catch { _fileCache = []; }
+  return _fileCache;
+}
+// Cheap fuzzy score: exact basename > basename-prefix > path-substring >
+// subsequence. Returns 0 for no match. Shorter paths win ties (sorted later).
+function scoreFile(q, file) {
+  if (!q) return 1; // bare "@" → list everything (shortest paths first)
+  const f = file.toLowerCase();
+  const base = f.slice(f.lastIndexOf("/") + 1);
+  if (base === q) return 100;
+  if (base.startsWith(q)) return 80;
+  const idx = f.indexOf(q);
+  if (idx !== -1) return base.indexOf(q) !== -1 ? 60 : 40;
+  // subsequence: all chars of q appear in order somewhere in the path
+  let i = 0;
+  for (const ch of f) { if (ch === q[i]) i++; if (i === q.length) break; }
+  return i === q.length ? 20 : 0;
+}
+// Build {value,label} items for an `@token` at the END of the line. `value` is
+// the full line with the token swapped for the chosen path (+ trailing space),
+// so the existing accept machinery (Tab/Enter → setLine/submit) just works.
+function fileSuggest(query, line) {
+  const q = query.toLowerCase();
+  const scored = [];
+  for (const f of projectFiles()) {
+    const sc = scoreFile(q, f);
+    if (sc > 0) scored.push([sc, f]);
+  }
+  scored.sort((a, b) => b[0] - a[0] || a[1].length - b[1].length);
+  const head = line.slice(0, line.length - (query.length + 1)); // drop the "@partial"
+  return scored.slice(0, 12).map(([, f]) => ({
+    value: head + f + " ",
+    label: `${c.bold(f)} ${c.dim("@file")}`,
+  }));
+}
+
+// Suggestions to draw live under the input as the user types a slash command
+// or an `@file` reference. Each item is { value, label }: `value` is what gets
+// run if picked, `label` is the (already-colored) text shown. Returns [] when
+// there's nothing to suggest.
 function liveSuggest(line) {
   const s = String(line || "");
-  if (!s.startsWith("/")) return [];
+  // `@file` reference: trigger on an @token at the end of the line (preceded by
+  // start-of-line or whitespace), as long as the line isn't a slash command.
+  if (!s.startsWith("/")) {
+    const at = s.match(/(?:^|\s)@(\S*)$/);
+    if (at) return fileSuggest(at[1], s);
+    return [];
+  }
   const parts = s.split(/\s+/);
   const head = parts[0];
 
@@ -164,6 +218,8 @@ const HELP = `${c.faint("/help — show help")}
 
 ${c.muted("Available commands:")}
   ${c.bold("/help")}     ${c.faint("Show help")}
+  ${c.bold("/new")}      ${c.faint("Start a fresh conversation (keeps the current one saved)")}
+  ${c.bold("/session")}  ${c.faint("Show this conversation's id, file, model, tokens & cost")}
   ${c.bold("/model")}    ${c.faint("Switch model for this session")}
   ${c.bold("/models")}   ${c.faint("List models for the active provider")}
   ${c.bold("/login")}    ${c.faint("Add / switch provider")}
@@ -176,7 +232,7 @@ ${c.muted("Available commands:")}
   ${c.bold("/clear")}    ${c.faint("Clear conversation history")}
   ${c.bold("/exit")}     ${c.faint("Quit tawx")}
 
-${c.muted("Keys:")}  ${c.faint("↑/↓ recall · type / for live suggestions · Tab/→ accept · Ctrl-C interrupt")}`;
+${c.muted("Keys:")}  ${c.faint("↑/↓ recall · / commands · @ file refs · Tab/→ accept · Ctrl-C interrupt")}`;
 
 export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   // historySize:0 hands ↑/↓ to us — we drive the suggestion dropdown with them
@@ -901,6 +957,37 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
       }
       if (cmd === "exit") break;
       else if (cmd === "help") process.stdout.write(HELP + "\n");
+      else if (cmd === "new") {
+        // The current conversation is already on disk (saved after each turn).
+        // Start a clean one with its own id/file so both stay independently resumable.
+        const prevTail = sessionId.slice(-4);
+        saveSession();
+        agent.reset();
+        tree.length = 0; leafId = null;
+        lastTokens = 0; lastSecs = 0; totalCost = 0;
+        const nstamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "").replace(/-/g, "");
+        sessionId = `${nstamp}-${Math.floor(Math.random() * 1e4).toString().padStart(4, "0")}`;
+        sessionFile = path.join(SESS_DIR, `${sessionId}.json`);
+        startedAt = new Date().toISOString();
+        if (layoutOn) repaint();
+        else process.stdout.write(c.green(`  ✦ new session #${sessionId.slice(-4)}`) + c.dim(`  (kept #${prevTail} — tawx resume #${prevTail})\n`));
+      }
+      else if (cmd === "session") {
+        const home = os.homedir();
+        let f = sessionFile;
+        if (f.startsWith(home + "/")) f = "~" + f.slice(home.length);
+        const n = agent.messages.filter((m) => m.role !== "system").length;
+        const win = contextWindowFor(agent.model);
+        const lines = [
+          `  ${c.bold("session")} ${c.accent("#" + sessionId.slice(-4))}  ${c.dim(sessionId)}`,
+          `  file:     ${c.dim(f)}`,
+          `  model:    ${agent.model} ${c.dim("· " + PROVIDER + (autoApprove ? " · YOLO" : " · safe"))}`,
+          `  messages: ${n}`,
+        ];
+        if (lastTokens) lines.push(`  context:  ${fmtK(lastTokens)}/${fmtK(win)} ${c.dim(`(${Math.round((lastTokens / win) * 100)}%)`)}`);
+        if (totalCost > 0) lines.push(`  cost:     $${totalCost.toFixed(3)}`);
+        process.stdout.write(lines.join("\n") + "\n");
+      }
       else if (cmd === "login") await tuiLogin(rest[0], ask);
       else if (cmd === "use") await tuiUse(rest[0], rest[1], ask);
       else if (cmd === "models") {

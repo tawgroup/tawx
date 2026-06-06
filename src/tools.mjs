@@ -38,7 +38,8 @@ function globToRegExp(glob) {
 }
 
 // Recursively collect file paths (relative to root), skipping IGNORE_DIRS. Bounded for safety.
-function walkFiles(root, { limit = 5000 } = {}) {
+// Exported so the TUI's `@file` reference picker can reuse the same ignore rules.
+export function walkFiles(root, { limit = 5000 } = {}) {
   const out = [];
   const stack = [root];
   while (stack.length && out.length < limit) {
