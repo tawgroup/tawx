@@ -40,6 +40,6 @@ Other helpers: `tawx models` / `tx models` · `tawx whoami` / `tx whoami`
 
 ## Tools
 
-`read_file` · `write_file` · `edit_file` · `diff` · `apply_patch` · `undo_last_change` · `glob` · `grep` · `list_dir` · `web_fetch` · `bash`
+`read_file` · `write_file` · `edit_file` · `multi_edit` · `diff` · `apply_patch` · `undo_last_change` · `glob` · `grep` · `list_dir` · `web_fetch` · `bash`
 
 MIT · [tawgroup](https://github.com/tawgroup)

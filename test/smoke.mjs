@@ -28,6 +28,26 @@ await TOOLS.edit_file.run({ path: "a.txt", old_string: "world", new_string: "taw
 assert.ok(fs.readFileSync(path.join(tmp, "a.txt"), "utf8").includes("taw"));
 ok("edit_file");
 
+// multi_edit: several replacements in one atomic call, applied in order.
+await TOOLS.write_file.run({ path: "m.txt", content: "alpha beta alpha gamma" }, ctx);
+const me = await TOOLS.multi_edit.run(
+  { path: "m.txt", edits: [{ old_string: "beta", new_string: "BETA" }, { old_string: "alpha", new_string: "X", replace_all: true }] },
+  ctx,
+);
+assert.ok(me.includes("OK: applied 2 edits"), "multi_edit reports applied edits");
+assert.equal(fs.readFileSync(path.join(tmp, "m.txt"), "utf8"), "X BETA X gamma");
+ok("multi_edit (ordered, replace_all)");
+
+// multi_edit is all-or-nothing: a failing edit writes nothing.
+await TOOLS.write_file.run({ path: "m2.txt", content: "keep this" }, ctx);
+const meFail = await TOOLS.multi_edit.run(
+  { path: "m2.txt", edits: [{ old_string: "keep", new_string: "KEEP" }, { old_string: "nope", new_string: "x" }] },
+  ctx,
+);
+assert.ok(meFail.startsWith("ERROR") && meFail.includes("#2"), "multi_edit fails on missing old_string");
+assert.equal(fs.readFileSync(path.join(tmp, "m2.txt"), "utf8"), "keep this", "multi_edit writes nothing on failure");
+ok("multi_edit (atomic rollback)");
+
 const d = await TOOLS.diff.run({ path: "a.txt", old_string: "taw", new_string: "TAW" }, ctx);
 assert.ok(d.includes("--- a/a.txt") && d.includes("+TAW"), "diff previews replacement");
 ok("diff preview");

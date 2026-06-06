@@ -303,6 +303,67 @@ export const TOOLS = {
     },
   },
 
+  multi_edit: {
+    schema: {
+      type: "function",
+      function: {
+        name: "multi_edit",
+        description:
+          "Apply several string replacements to ONE file in a single call. Edits run IN ORDER, " +
+          "each on the result of the previous one. ALL-OR-NOTHING: if any old_string doesn't match " +
+          "(or matches more than once without replace_all), nothing is written. One undo checkpoint for the batch. " +
+          "Use this instead of multiple edit_file calls on the same file — fewer round-trips, cheaper, atomic.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            edits: {
+              type: "array",
+              description: "ordered list of replacements; each applies to the result of the previous",
+              items: {
+                type: "object",
+                properties: {
+                  old_string: { type: "string" },
+                  new_string: { type: "string" },
+                  replace_all: { type: "boolean" },
+                },
+                required: ["old_string", "new_string"],
+              },
+            },
+          },
+          required: ["path", "edits"],
+        },
+      },
+    },
+    needsApproval: true,
+    preview: (a) => `${a.path} (${Array.isArray(a.edits) ? a.edits.length : 0} edits)`,
+    async run(a, ctx) {
+      const f = resolve(ctx, a.path);
+      if (!fs.existsSync(f)) return `ERROR: not found ${a.path}`;
+      if (fs.statSync(f).isDirectory()) return `ERROR: ${a.path} is a directory`;
+      if (!Array.isArray(a.edits) || a.edits.length === 0) return "ERROR: edits must be a non-empty array";
+
+      // Apply every edit in memory first; only write if the whole batch succeeds.
+      let text = fs.readFileSync(f, "utf8");
+      let applied = 0;
+      for (let i = 0; i < a.edits.length; i++) {
+        const e = a.edits[i] || {};
+        if (typeof e.old_string !== "string" || typeof e.new_string !== "string")
+          return `ERROR: edit #${i + 1} needs string old_string and new_string`;
+        const count = text.split(e.old_string).length - 1;
+        if (count === 0) return `ERROR: edit #${i + 1} old_string not found (no change written)`;
+        if (count > 1 && !e.replace_all)
+          return `ERROR: edit #${i + 1} old_string matches ${count} places. Add replace_all=true or use a longer string (no change written).`;
+        text = e.replace_all ? text.split(e.old_string).join(e.new_string) : text.replace(e.old_string, e.new_string);
+        applied += e.replace_all ? count : 1;
+      }
+
+      const id = remember(ctx, [a.path]);
+      fs.writeFileSync(f, text);
+      return `OK: applied ${a.edits.length} edit${a.edits.length > 1 ? "s" : ""} (${applied} replacement${applied > 1 ? "s" : ""}) to ${a.path} (undo: ${id})`;
+    },
+  },
+
   list_dir: {
     schema: {
       type: "function",
