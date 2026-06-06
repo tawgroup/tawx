@@ -17,18 +17,18 @@ import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
 // available (see refreshModels in runTui). All model UI reads from here.
 let modelList = [...MODELS];
 
-const COMMANDS = ["/help", "/new", "/session", "/tree", "/resume", "/login", "/use", "/model", "/models", "/whoami", "/yolo", "/safe", "/clear", "/exit"];
+// Visible / autocompleted commands. /models, /whoami, /use still work as hidden
+// aliases (handled in the dispatcher) so muscle memory doesn't break.
+const COMMANDS = ["/help", "/new", "/session", "/model", "/provider", "/login", "/tree", "/resume", "/yolo", "/safe", "/clear", "/exit"];
 const COMMAND_DESC = {
   "/help": "show help",
   "/new": "start a fresh conversation (keeps the current one saved)",
-  "/session": "show this conversation's id, file, model, tokens & cost",
-  "/tree": "browse the conversation timeline — jump back to any You/tawx point & branch",
+  "/session": "show provider, model, tokens & cost for this conversation",
+  "/model": "pick the model — ↑/↓ to choose, or /model <id>",
+  "/provider": "switch provider (restarts tawx)",
+  "/login": "add or re-authenticate a provider",
+  "/tree": "browse the conversation timeline — jump back & branch",
   "/resume": "reopen a saved conversation and keep chatting",
-  "/login": "login provider inside TUI",
-  "/use": "switch provider/model and restart TUI",
-  "/model": "switch model for this TUI session",
-  "/models": "list models for active provider",
-  "/whoami": "show active provider/model",
   "/yolo": "auto-approve write/edit/bash",
   "/safe": "ask before write/edit/bash",
   "/clear": "clear conversation history",
@@ -39,12 +39,6 @@ function showCommandSuggestions(prefix = "/") {
   const hits = COMMANDS.filter((cmd) => cmd.startsWith(prefix));
   const list = hits.length ? hits : COMMANDS;
   return list.map((cmd) => `  ${c.bold(cmd)} ${c.dim("— " + COMMAND_DESC[cmd])}`).join("\n") + "\n";
-}
-
-function showModelSuggestions(prefix = "") {
-  const hits = modelList.filter((m) => m.startsWith(prefix));
-  const list = hits.length ? hits : modelList;
-  return list.map((m) => `  ${c.bold(m)}`).join("\n") + "\n";
 }
 
 // ---- `@file` reference picker --------------------------------------------
@@ -107,7 +101,7 @@ function liveSuggest(line) {
   const parts = s.split(/\s+/);
   const head = parts[0];
 
-  if (head === "/login" || head === "/use") {
+  if (head === "/login" || head === "/use" || head === "/provider") {
     const prefix = parts[1] || "";
     return Object.keys(PROVIDERS)
       .filter((p) => p.startsWith(prefix))
@@ -125,9 +119,12 @@ function liveSuggest(line) {
   }));
 }
 
+// Hidden aliases — not shown in help/autocomplete, but still resolve so old
+// muscle memory keeps working (the dispatcher routes them to the new handlers).
+const COMMAND_ALIASES = ["/models", "/use", "/whoami"];
 function resolveCommand(raw) {
   const full = raw.startsWith("/") ? raw : `/${raw}`;
-  if (COMMANDS.includes(full)) return full.slice(1);
+  if (COMMANDS.includes(full) || COMMAND_ALIASES.includes(full)) return full.slice(1);
   const hits = COMMANDS.filter((cmd) => cmd.startsWith(full));
   return hits.length === 1 ? hits[0].slice(1) : "";
 }
@@ -217,20 +214,18 @@ async function tuiUse(providerName, modelArg, ask) {
 const HELP = `${c.faint("/help — show help")}
 
 ${c.muted("Available commands:")}
-  ${c.bold("/help")}     ${c.faint("Show help")}
-  ${c.bold("/new")}      ${c.faint("Start a fresh conversation (keeps the current one saved)")}
-  ${c.bold("/session")}  ${c.faint("Show this conversation's id, file, model, tokens & cost")}
-  ${c.bold("/model")}    ${c.faint("Switch model for this session")}
-  ${c.bold("/models")}   ${c.faint("List models for the active provider")}
-  ${c.bold("/login")}    ${c.faint("Add / switch provider")}
-  ${c.bold("/use")}      ${c.faint("Switch provider and restart")}
-  ${c.bold("/whoami")}   ${c.faint("Show active provider / model")}
-  ${c.bold("/tree")}     ${c.faint("Jump back to / branch an earlier turn")}
-  ${c.bold("/resume")}   ${c.faint("Reopen a saved conversation")}
-  ${c.bold("/yolo")}     ${c.faint("Auto-approve every action (default)")}
-  ${c.bold("/safe")}     ${c.faint("Ask before write / edit / bash")}
-  ${c.bold("/clear")}    ${c.faint("Clear conversation history")}
-  ${c.bold("/exit")}     ${c.faint("Quit tawx")}
+  ${c.bold("/help")}      ${c.faint("Show help")}
+  ${c.bold("/new")}       ${c.faint("Start a fresh conversation (keeps the current one saved)")}
+  ${c.bold("/session")}   ${c.faint("Show provider, model, tokens & cost")}
+  ${c.bold("/model")}     ${c.faint("Pick the model — ↑/↓ to choose, or /model <id>")}
+  ${c.bold("/provider")}  ${c.faint("Switch provider (restarts tawx)")}
+  ${c.bold("/login")}     ${c.faint("Add or re-authenticate a provider")}
+  ${c.bold("/tree")}      ${c.faint("Jump back to / branch an earlier turn")}
+  ${c.bold("/resume")}    ${c.faint("Reopen a saved conversation")}
+  ${c.bold("/yolo")}      ${c.faint("Auto-approve every action (default)")}
+  ${c.bold("/safe")}      ${c.faint("Ask before write / edit / bash")}
+  ${c.bold("/clear")}     ${c.faint("Clear conversation history")}
+  ${c.bold("/exit")}      ${c.faint("Quit tawx")}
 
 ${c.muted("Keys:")}  ${c.faint("↑/↓ recall · / commands · @ file refs · Tab/→ accept · Ctrl-C interrupt")}`;
 
@@ -825,6 +820,46 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     return true;
   };
 
+  // Generic modal picker — ↑/↓ move, Enter select, Esc cancel. items: [{label,value}].
+  // Returns the chosen item's `value`, or null on cancel. Used by /model and /provider.
+  const pickFromMenu = (items, { prompt = "↑/↓ move · Enter select · Esc cancel", initial = 0 } = {}) =>
+    new Promise((resolve) => {
+      if (!items.length) { resolve(null); return; }
+      const N = Math.min(items.length, 14);
+      let sel = Math.max(0, Math.min(initial, N - 1));
+      const render = () => {
+        process.stdout.write("\x1b7\n\x1b[J");
+        const lines = items.slice(0, N).map((it, i) =>
+          (i === sel ? c.accent("❯ ") : "  ") + (i === sel ? c.inverse(" " + it.label + " ") : c.dim(it.label)));
+        if (items.length > N) lines.push("  " + c.faint(`… +${items.length - N} more (type /model <id> to jump)`));
+        process.stdout.write(lines.join("\n"));
+        process.stdout.write("\x1b8");
+      };
+      const cleanup = () => { process.stdin.removeListener("keypress", onKey); rl.removeListener("line", onLine); process.stdout.write("\x1b[J"); };
+      const onKey = (_s, key) => {
+        if (!key) return;
+        if (key.name === "up") { sel = (sel - 1 + N) % N; render(); }
+        else if (key.name === "down") { sel = (sel + 1) % N; render(); }
+        else if (key.name === "escape") { cleanup(); resolve(null); }
+      };
+      const onLine = () => { cleanup(); resolve(items[sel]?.value ?? null); };
+      process.stdin.on("keypress", onKey);
+      rl.on("line", onLine);
+      rl.setPrompt(c.dim("  " + prompt + " "));
+      rl.prompt();
+      render();
+    });
+
+  // Switch the model live + persist it for the active provider (survives restart).
+  const applyModel = (picked) => {
+    agent.setModel(picked);
+    const cur = AUTH.providers?.[PROVIDER] || {};
+    AUTH.providers = { ...(AUTH.providers || {}), [PROVIDER]: { ...cur, model: picked, baseUrl: cur.baseUrl || PROVIDERS[PROVIDER]?.baseUrl || "" } };
+    AUTH.active = AUTH.active || PROVIDER;
+    saveAuth(AUTH);
+    process.stdout.write(c.dim(`  model → ${c.bold(picked)} (saved for ${PROVIDER})\n`));
+  };
+
   // Modal picker over saved sessions — ↑/↓ move, Enter open, Esc cancel. Returns
   // a session id or null. Renders in the transcript region like selectFromTree.
   const selectFromSessions = () => new Promise((resolve) => {
@@ -1001,27 +1036,36 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         process.stdout.write(lines.join("\n") + "\n");
       }
       else if (cmd === "login") await tuiLogin(rest[0], ask);
-      else if (cmd === "use") await tuiUse(rest[0], rest[1], ask);
-      else if (cmd === "models") {
-        const ids = await listModels();
-        if (ids?.length) { modelList = ids; process.stdout.write(c.dim(`  ${ids.length} models (live from ${PROVIDER}):\n`)); }
-        else process.stdout.write(c.dim("  models (built-in list):\n"));
-        process.stdout.write("  " + modelList.join("\n  ") + "\n");
-      }
-      else if (cmd === "whoami") process.stdout.write(`  provider: ${PROVIDER}\n  model: ${agent.model}\n  note: use \`tawx login\` or \`tawx use\` outside TUI to switch provider persistently\n`);
-      else if (cmd === "model") {
-        const picked = rest[0] ? resolveModel(rest[0]) : "";
-        if (!rest[0]) process.stdout.write(c.dim("  choose a model:\n") + showModelSuggestions());
-        else if (!picked) process.stdout.write(c.yellow(`  model not unique/known: ${rest[0]}\n`) + c.dim("  suggestions:\n") + showModelSuggestions(rest[0]));
-        else {
-          agent.setModel(picked);
-          // Persist for the active provider so the choice survives a restart.
-          const cur = AUTH.providers?.[PROVIDER] || {};
-          AUTH.providers = { ...(AUTH.providers || {}), [PROVIDER]: { ...cur, model: picked, baseUrl: cur.baseUrl || PROVIDERS[PROVIDER]?.baseUrl || "" } };
-          AUTH.active = AUTH.active || PROVIDER;
-          saveAuth(AUTH);
-          process.stdout.write(c.dim(`  model → ${picked} (saved for ${PROVIDER})\n`));
+      else if (cmd === "model" || cmd === "models") {
+        // /model <id> = jump straight there; bare /model = arrow picker. Refresh the
+        // live model list first so the picker shows what the provider actually offers.
+        const ids = await listModels(); if (ids?.length) modelList = ids;
+        if (rest[0]) {
+          const picked = resolveModel(rest[0]);
+          if (!picked) process.stdout.write(c.yellow(`  no model matching "${rest[0]}"\n`) + c.dim("  try bare /model to pick from a list\n"));
+          else applyModel(picked);
+        } else {
+          const items = modelList.map((m) => ({ value: m, label: m + (m === agent.model ? c.ok("  ● current") : "") }));
+          const picked = await pickFromMenu(items, { prompt: `model for ${PROVIDER} — ↑/↓ · Enter · Esc`, initial: Math.max(0, modelList.indexOf(agent.model)) });
+          if (picked) applyModel(picked); else { process.stdout.write(c.dim(`  (kept ${agent.model})\n`)); drawChromeIdle(); }
         }
+      }
+      else if (cmd === "provider" || cmd === "use" || cmd === "whoami") {
+        // /whoami kept as an alias — but /session already shows this; nudge there.
+        if (cmd === "whoami") { process.stdout.write(`  provider: ${c.bold(PROVIDER)}\n  model:    ${c.bold(agent.model)}\n` + c.dim("  (tip: /session shows tokens & cost too; /provider to switch)\n")); continue; }
+        const names = Object.keys(PROVIDERS);
+        let picked = rest[0] ? (PROVIDERS[rest[0]] ? rest[0] : "") : null;
+        if (rest[0] && !picked) { process.stdout.write(c.yellow(`  unknown provider: ${rest[0]}\n`)); continue; }
+        if (picked === null) {
+          const items = names.map((p) => ({ value: p, label: `${p}  ${c.dim("— " + PROVIDERS[p].label)}` + (p === PROVIDER ? c.ok("  ● current") : (AUTH.providers?.[p] || PROVIDERS[p].type === "claude-cli" ? "" : c.faint("  (needs /login)"))) }));
+          picked = await pickFromMenu(items, { prompt: "provider — ↑/↓ · Enter (restarts) · Esc", initial: Math.max(0, names.indexOf(PROVIDER)) });
+        }
+        if (!picked) { process.stdout.write(c.dim(`  (kept ${PROVIDER})\n`)); drawChromeIdle(); continue; }
+        if (picked === PROVIDER) { process.stdout.write(c.dim(`  (already on ${PROVIDER})\n`)); continue; }
+        // Need credentials? claude-cli uses the local `claude` login, so it's exempt.
+        const hasCreds = AUTH.providers?.[picked] || PROVIDERS[picked].type === "claude-cli";
+        if (!hasCreds) { process.stdout.write(c.yellow(`  ${picked} needs login first —\n`)); await tuiLogin(picked, ask); }
+        else await tuiUse(picked, null, ask); // saves active provider + restarts
       }
       else if (cmd === "yolo") { autoApprove = true; process.stdout.write(c.yellow("  YOLO: auto-approving every action\n")); }
       else if (cmd === "safe") { autoApprove = false; process.stdout.write(c.dim("  SAFE: ask before write/edit/bash\n")); }

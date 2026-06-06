@@ -27,8 +27,10 @@ tawx            # or: tx
 Useful TUI commands:
 
 ```text
-/model <id>   switch model
-/models       list models
+/model        pick the model — ↑/↓ to choose (or /model <id>)
+/provider     switch provider (restarts tawx)
+/login        add or re-authenticate a provider
+/session      show provider, model, tokens & cost
 /yolo         auto-approve tool use
 /safe         ask before risky tools
 /clear        clear conversation
@@ -36,7 +38,7 @@ Useful TUI commands:
 Ctrl-C        interrupt
 ```
 
-Other helpers: `tawx models` / `tx models` · `tawx whoami` / `tx whoami`
+CLI helpers: `tawx models` · `tawx whoami` · `tawx use` / `tawx login`
 
 ## Tools
 
