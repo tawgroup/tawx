@@ -150,7 +150,7 @@ export const DEFAULT_MODEL = SAVED_PROVIDER.model || process.env.TAWX_MODEL || P
 export const MODELS = PROVIDER_CONFIG.models;
 export const GO_MODELS = PROVIDERS.opencode.models; // backwards-compatible export
 
-export const MAX_STEPS = Number(process.env.TAWX_MAX_STEPS || 40);
+export const MAX_STEPS = Number(process.env.TAWX_MAX_STEPS || 200);
 export const MAX_TOKENS = Number(process.env.TAWX_MAX_TOKENS || 8192);
 export const REQUEST_TIMEOUT_MS = Number(process.env.TAWX_REQUEST_TIMEOUT || 180000);
 
