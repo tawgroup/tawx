@@ -233,7 +233,23 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   // historySize:0 hands ↑/↓ to us — we drive the suggestion dropdown with them
   // (and fall back to our own input history when no dropdown is showing).
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, completer: complete, historySize: 0 });
-  const ask = (q) => new Promise((r) => rl.question(q, r));
+  const busyInputQueue = [];
+  let captureBusyInput = false;
+  let promptInputActive = false;
+  rl.on("line", (line) => {
+    if (!captureBusyInput || promptInputActive) return;
+    const text = String(line || "").trim();
+    if (!text) return;
+    busyInputQueue.push(text);
+    process.stdout.write(c.dim(`  ↳ queued for next turn: ${text.slice(0, 80)}\n`));
+  });
+  const ask = (q) => new Promise((r) => {
+    promptInputActive = true;
+    rl.question(q, (answer) => {
+      promptInputActive = false;
+      r(answer);
+    });
+  });
 
   // Refresh the model list from the provider's live /models in the background.
   // Non-blocking: the hardcoded seed is already usable; this just freshens it.
@@ -253,6 +269,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   const setLine = (text) => { rl.line = text; rl.cursor = text.length; rl._refreshLine?.(); };
   const askMain = (q) =>
     new Promise((resolve) => {
+      promptInputActive = true;
       let items = [];     // current { value, label } suggestions
       let sel = -1;       // highlighted index, -1 = nothing selected (Enter runs typed text)
       let hpos = inputHist.length; // cursor into inputHist for ↑/↓ recall
@@ -401,6 +418,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         picked = picked.replace(/\[pasted \d+ chars #(\d+)\]/g, (m, id) => pasteStore.get(Number(id)) ?? m);
         const trimmed = picked.trim();
         if (trimmed && inputHist[inputHist.length - 1] !== trimmed) inputHist.push(trimmed);
+        promptInputActive = false;
         resolve(picked);
       };
 
@@ -985,12 +1003,13 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   }
 
   for (;;) {
+    const queuedInput = busyInputQueue.shift();
     if (!layoutOn) process.stdout.write("\n"); // breathing room between turns (layout has fixed chrome)
-    const input = (await askMain(c.accent("❯ "))).trim();
+    const input = (queuedInput ?? await askMain(c.accent("❯ "))).trim();
     if (!input) continue;
     // In layout mode readline echoed the input into the (now-cleared) composer, not
     // the transcript — so replay it into the scroll region as the user's turn.
-    if (layoutOn) process.stdout.write("\n" + c.accent("❯ ") + input + "\n");
+    if (layoutOn || queuedInput) process.stdout.write("\n" + c.accent("❯ ") + input + "\n");
 
     // Treat as a slash command only if the first token is a single word — an
     // absolute file path ("/var/folders/…png", e.g. a pasted image) also starts
@@ -1097,6 +1116,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
 
     try {
       aborter = new AbortController();
+      captureBusyInput = true;
       await agent.send(input, { signal: aborter.signal });
     } catch (e) {
       stopSpin();
@@ -1104,6 +1124,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
       if (aborter?.signal.aborted) process.stdout.write(c.yellow("  ⎋ stopped\n"));
       else process.stdout.write(c.red(`  ✗ ${e.message}\n`));
     } finally {
+      captureBusyInput = false;
       aborter = null;
     }
     recordTurn(input); // snapshot this turn into the conversation tree
