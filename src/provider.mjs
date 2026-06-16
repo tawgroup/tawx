@@ -352,62 +352,107 @@ async function chatCodex({ messages, tools, model, signal, onToken }) {
   const rtools = responsesTools(tools);
   if (rtools.length) body.tools = rtools;
 
-  const res = await fetch(codexUrl(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${access}`,
-      "chatgpt-account-id": accountId,
-      originator: "tawx",
-      "OpenAI-Beta": "responses=experimental",
-      accept: "text/event-stream",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok) throw new Error(`Codex request failed (${res.status}): ${await res.text().catch(() => res.statusText)}`);
+  let lastErr;
+  let emitted = false;
+  const tokenOnce = (t) => {
+    emitted = true;
+    if (onToken) onToken(t);
+  };
 
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  let content = "";
-  const calls = new Map();
-  let usage = {};
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf("\n")) !== -1) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      let ev; try { ev = JSON.parse(data); } catch { continue; }
-      if (ev.type === "response.output_text.delta" && ev.delta) {
-        content += ev.delta;
-        if (onToken) onToken(ev.delta);
-      } else if (ev.type === "response.output_item.added" && ev.item?.type === "function_call") {
-        calls.set(ev.item.call_id, { id: ev.item.call_id, type: "function", function: { name: ev.item.name, arguments: ev.item.arguments || "" } });
-      } else if (ev.type === "response.function_call_arguments.delta") {
-        const call = [...calls.values()].at(-1);
-        if (call) call.function.arguments += ev.delta || "";
-      } else if (ev.type === "response.function_call_arguments.done") {
-        const call = [...calls.values()].at(-1);
-        if (call) call.function.arguments = ev.arguments || call.function.arguments || "{}";
-      } else if (ev.type === "response.output_item.done" && ev.item?.type === "function_call") {
-        calls.set(ev.item.call_id, { id: ev.item.call_id, type: "function", function: { name: ev.item.name, arguments: ev.item.arguments || "{}" } });
-      } else if (ev.type === "response.completed" && ev.response?.usage) {
-        const u = ev.response.usage;
-        usage = { prompt_tokens: u.input_tokens, completion_tokens: u.output_tokens, total_tokens: u.total_tokens };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const ctl = new AbortController();
+    const onAbort = () => ctl.abort(signal.reason);
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    let timer = setTimeout(() => ctl.abort(new Error("timeout")), REQUEST_TIMEOUT_MS);
+    const bump = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => ctl.abort(new Error("timeout")), REQUEST_TIMEOUT_MS);
+    };
+
+    try {
+      const res = await fetch(codexUrl(), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${access}`,
+          "chatgpt-account-id": accountId,
+          originator: "tawx",
+          "OpenAI-Beta": "responses=experimental",
+          accept: "text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: ctl.signal,
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        const msg = text.slice(0, 300);
+        if (isFatal(res.status, `HTTP ${res.status}`, msg)) {
+          throw Object.assign(new Error(`Codex request failed (${res.status}): ${msg}`), { fatal: true });
+        }
+        lastErr = new Error(`Codex request failed (${res.status}): ${msg}`);
+        await SLEEP(800 * (attempt + 1));
+        continue;
       }
+
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let content = "";
+      const calls = new Map();
+      let usage = {};
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bump();
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let ev; try { ev = JSON.parse(data); } catch { continue; }
+          if (ev.type === "response.output_text.delta" && ev.delta) {
+            content += ev.delta;
+            tokenOnce(ev.delta);
+          } else if (ev.type === "response.output_item.added" && ev.item?.type === "function_call") {
+            calls.set(ev.item.call_id, { id: ev.item.call_id, type: "function", function: { name: ev.item.name, arguments: ev.item.arguments || "" } });
+          } else if (ev.type === "response.function_call_arguments.delta") {
+            const call = [...calls.values()].at(-1);
+            if (call) call.function.arguments += ev.delta || "";
+          } else if (ev.type === "response.function_call_arguments.done") {
+            const call = [...calls.values()].at(-1);
+            if (call) call.function.arguments = ev.arguments || call.function.arguments || "{}";
+          } else if (ev.type === "response.output_item.done" && ev.item?.type === "function_call") {
+            calls.set(ev.item.call_id, { id: ev.item.call_id, type: "function", function: { name: ev.item.name, arguments: ev.item.arguments || "{}" } });
+          } else if (ev.type === "response.completed" && ev.response?.usage) {
+            const u = ev.response.usage;
+            usage = { prompt_tokens: u.input_tokens, completion_tokens: u.output_tokens, total_tokens: u.total_tokens };
+          } else if (ev.type === "response.failed" || ev.type === "response.incomplete" || ev.type === "error") {
+            const err = ev.response?.error || ev.error || ev;
+            const msg = err.message || err.code || ev.type;
+            throw new Error(`Codex stream failed: ${msg}`);
+          }
+        }
+      }
+      const message = { role: "assistant", content };
+      const tool_calls = [...calls.values()];
+      if (tool_calls.length) message.tool_calls = tool_calls;
+      return { message, finish_reason: tool_calls.length ? "tool_calls" : "stop", usage };
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      if (e.fatal) throw e;
+      if (emitted) throw e;
+      lastErr = new Error(`Codex request error/timeout: ${e.message}`);
+      await SLEEP(500 * (attempt + 1));
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onAbort);
     }
   }
-  const message = { role: "assistant", content };
-  const tool_calls = [...calls.values()];
-  if (tool_calls.length) message.tool_calls = tool_calls;
-  return { message, finish_reason: tool_calls.length ? "tool_calls" : "stop", usage };
+  throw lastErr || new Error("Codex request failed");
 }
 
 function lastUserText(messages) {

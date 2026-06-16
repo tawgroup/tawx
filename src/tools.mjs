@@ -310,6 +310,54 @@ export const TOOLS = {
     },
   },
 
+  replace_lines: {
+    schema: {
+      type: "function",
+      function: {
+        name: "replace_lines",
+        description:
+          "Replace an inclusive 1-based line range in a file. Use after read_file when exact string/hunk edits fail or would be brittle. " +
+          "Set new_content to an empty string to delete the range.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+            start_line: { type: "number", description: "1-based first line to replace" },
+            end_line: { type: "number", description: "1-based last line to replace, inclusive" },
+            new_content: { type: "string", description: "replacement text for that range" },
+          },
+          required: ["path", "start_line", "end_line", "new_content"],
+        },
+      },
+    },
+    needsApproval: true,
+    preview: (a) => `${a.path}:${a.start_line}-${a.end_line}`,
+    async run(a, ctx) {
+      const f = resolve(ctx, a.path);
+      if (!fs.existsSync(f)) return `ERROR: not found ${a.path}`;
+      if (fs.statSync(f).isDirectory()) return `ERROR: ${a.path} is a directory`;
+
+      const start = Math.trunc(Number(a.start_line));
+      const end = Math.trunc(Number(a.end_line));
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start)
+        return "ERROR: start_line/end_line must be a valid inclusive 1-based range";
+
+      const before = fs.readFileSync(f, "utf8");
+      const hadTrailing = before === "" ? true : before.endsWith("\n");
+      const lines = before.length ? before.replace(/\n$/, "").split("\n") : [];
+      if (end > lines.length) return `ERROR: line range ${start}-${end} exceeds ${a.path} (${lines.length} lines)`;
+
+      const repl = String(a.new_content);
+      const replLines = repl === "" ? [] : repl.replace(/\n$/, "").split("\n");
+      const nextLines = [...lines];
+      nextLines.splice(start - 1, end - start + 1, ...replLines);
+      const next = nextLines.join("\n") + (hadTrailing ? "\n" : "");
+      const id = remember(ctx, [a.path]);
+      fs.writeFileSync(f, next);
+      return `OK: replaced lines ${start}-${end} in ${a.path} (undo: ${id})`;
+    },
+  },
+
   multi_edit: {
     schema: {
       type: "function",
@@ -415,6 +463,7 @@ export const TOOLS = {
             path: { type: "string", description: "dir/file, defaults to cwd" },
             include: { type: "string", description: "only search files matching this glob, e.g. '*.mjs'" },
             context: { type: "number", description: "lines of context around each match (like grep -C)" },
+            literal: { type: "boolean", description: "treat pattern as plain text instead of regex" },
           },
           required: ["pattern"],
         },
@@ -427,15 +476,16 @@ export const TOOLS = {
       const q = a.pattern.replace(/'/g, "'\\''");
       const ctxN = Number.isFinite(a.context) && a.context > 0 ? ` -C ${Math.min(a.context, 10)}` : "";
       const inc = a.include ? String(a.include).replace(/'/g, "'\\''") : "";
+      const fixed = a.literal ? " -F" : "";
 
       // ripgrep honours .gitignore + skips binaries automatically; -g filters by glob.
       const rgInc = inc ? ` -g '${inc}'` : "";
-      const rg = `rg -n --no-heading${ctxN}${rgInc} -e '${q}' '${where}'`;
+      const rg = `rg -n --no-heading${fixed}${ctxN}${rgInc} -e '${q}' '${where}'`;
 
       // grep fallback: explicitly exclude the noise dirs ripgrep would have skipped.
       const excl = [...IGNORE_DIRS].map((d) => `--exclude-dir='${d}'`).join(" ");
       const grepInc = inc ? ` --include='${inc}'` : "";
-      const grep = `grep -rnI ${excl}${ctxN}${grepInc} -e '${q}' '${where}'`;
+      const grep = `grep -rnI${fixed} ${excl}${ctxN}${grepInc} -e '${q}' '${where}'`;
 
       const cmd = `command -v rg >/dev/null 2>&1 && ${rg} || ${grep}`;
       const out = await sh(cmd, ctx.cwd, 30000);

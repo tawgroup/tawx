@@ -28,6 +28,12 @@ await TOOLS.edit_file.run({ path: "a.txt", old_string: "world", new_string: "taw
 assert.ok(fs.readFileSync(path.join(tmp, "a.txt"), "utf8").includes("taw"));
 ok("edit_file");
 
+await TOOLS.write_file.run({ path: "lines.txt", content: "one\ntwo\nthree\nfour\n" }, ctx);
+const rl = await TOOLS.replace_lines.run({ path: "lines.txt", start_line: 2, end_line: 3, new_content: "TWO\nTHREE" }, ctx);
+assert.ok(rl.includes("OK: replaced lines 2-3"), "replace_lines reports changed range");
+assert.equal(fs.readFileSync(path.join(tmp, "lines.txt"), "utf8"), "one\nTWO\nTHREE\nfour\n");
+ok("replace_lines");
+
 // multi_edit: several replacements in one atomic call, applied in order.
 await TOOLS.write_file.run({ path: "m.txt", content: "alpha beta alpha gamma" }, ctx);
 const me = await TOOLS.multi_edit.run(
