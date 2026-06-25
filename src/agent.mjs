@@ -189,7 +189,7 @@ export function createAgent(opts = {}) {
       // line up with the assistant's call order regardless of finish order).
       for (const p of plan) {
         if (p.run) {
-          onEvent({ type: "tool_result", id: p.call.id, name: p.name, result: p.result });
+          onEvent({ type: "tool_result", id: p.call.id, name: p.name, result: p.result, preview: p.preview });
           messages.push({ role: "tool", tool_call_id: p.call.id, content: String(p.result) });
         } else {
           messages.push({ role: "tool", tool_call_id: p.call.id, content: p.content });

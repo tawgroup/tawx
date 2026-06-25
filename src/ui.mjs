@@ -147,6 +147,109 @@ export function createMdStream(write) {
   };
 }
 
+// ---- One-line, verb-led tool summaries (flux-inspired) ---------------------
+// Each finished tool call collapses to a single readable line instead of dumping
+// the raw result. Only genuinely useful output (bash, diff) gets a short dimmed
+// body underneath. Keeps the transcript scannable: verb · target · detail.
+export const TOOL_VERB = {
+  read_file: "read", list_dir: "list", glob: "find", grep: "grep", diff: "diff",
+  web_fetch: "fetch", write_file: "write", edit_file: "edit", multi_edit: "edit",
+  replace_lines: "edit", apply_patch: "patch", undo_last_change: "undo", bash: "bash",
+};
+const WRITE_TOOLS = new Set([
+  "write_file", "edit_file", "multi_edit", "replace_lines", "apply_patch", "undo_last_change",
+]);
+const firstLine = (s) => String(s).split("\n")[0];
+const clip = (s, n) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s);
+
+// The "what was touched" portion — prefer the call preview (path/pattern/command),
+// stripping any trailing "(123 bytes)" / "(3 edits)" annotation it carries.
+function toolTarget(name, result, preview) {
+  if (name === "apply_patch") return (String(result).match(/patch to (.+?) \(undo/) || [])[1] || "";
+  if (name === "undo_last_change") return "";
+  return String(preview || "").replace(/\s*\(\d[^)]*\)\s*$/, "").trim();
+}
+
+// The trailing "· detail" — a count/size parsed back out of the tool's result string.
+function toolDetail(name, result) {
+  const r = String(result); let m;
+  switch (name) {
+    case "read_file":
+      if ((m = r.match(/…\[showing lines (\d+)-(\d+) of (\d+)\]/))) return `lines ${m[1]}-${m[2]} of ${m[3]}`;
+      { const n = r ? r.split("\n").length : 0; return `${n} line${n === 1 ? "" : "s"}`; }
+    case "list_dir": {
+      if (r === "(empty)") return "empty";
+      const items = r.split("\n"), dirs = items.filter((x) => x.endsWith("/")).length;
+      return `${items.length} item${items.length === 1 ? "" : "s"}` + (dirs ? `, ${dirs} dir${dirs === 1 ? "" : "s"}` : "");
+    }
+    case "glob":
+      if ((m = r.match(/\((\d+) files?\)\s*$/))) return `${m[1]} file${m[1] === "1" ? "" : "s"}`;
+      return /^\(no files match/.test(r) ? "no matches" : "";
+    case "grep": {
+      if (/^\(no matches\)/.test(r.trim())) return "no matches";
+      const hits = r.split("\n").filter((l) => /:\d+:/.test(l));
+      const files = new Set(hits.map((l) => l.split(":")[0]));
+      return hits.length ? `${hits.length} match${hits.length === 1 ? "" : "es"}` + (files.size > 1 ? ` · ${files.size} files` : "") : "";
+    }
+    case "write_file": return (m = r.match(/\((\d+) bytes/)) ? `${m[1]} bytes` : "";
+    case "edit_file": return (m = r.match(/\((\d+) places?/)) ? `${m[1]} place${m[1] === "1" ? "" : "s"}` : "1 place";
+    case "multi_edit": return (m = r.match(/applied (\d+) edits?/)) ? `${m[1]} edits` : "";
+    case "apply_patch": return ""; // files shown as the target
+    case "undo_last_change": return (m = r.match(/reverted (\d+)/)) ? `${m[1]} file${m[1] === "1" ? "" : "s"}` : "";
+    case "web_fetch": return (m = r.match(/\[(\d{3})/)) ? m[1] : "";
+    default: return "";
+  }
+}
+
+// Render a completed tool call as printable lines (already colored, no PANEL pad).
+// Returns ["▏ verb target · detail", ...optional dimmed body].
+export function renderToolResult(name, result, preview, cols = 80) {
+  const r = String(result);
+  const w = Math.max(30, Math.min((cols || 80) - 4, 100));
+  const verb = TOOL_VERB[name] || name;
+  const tgt = toolTarget(name, r, preview);
+
+  // Errors / interrupts: a single red line carrying the reason.
+  if (/^ERROR/.test(r.trim()) || r.trim() === "(interrupted by user)") {
+    const msg = clip(firstLine(r).replace(/^ERROR:?\s*/, "") || "failed", w - 18);
+    return ["  " + c.red("▏ ") + c.red(verb) + (tgt ? " " + c.muted(clip(tgt, 44)) : "") + c.faint(" · ") + c.red(msg)];
+  }
+
+  const kind = WRITE_TOOLS.has(name) ? "write" : name === "bash" ? "run" : "read";
+  const tint = kind === "write" ? c.ok : kind === "run" ? c.accent : c.soft;
+
+  // detail: bash colors the exit code; everything else is a faint count/size.
+  let detailNode = "";
+  if (name === "bash") {
+    const code = (r.match(/^\(exit (\d+)\)/) || [])[1];
+    detailNode = c.faint(" · ") + (code === "0" ? c.ok("exit 0") : c.amber("exit " + (code ?? "?")));
+  } else {
+    const d = toolDetail(name, r);
+    if (d) detailNode = c.faint(" · " + d);
+  }
+
+  const head = "  " + tint("▏ ") + tint(verb)
+    + (tgt ? " " + c.text(clip(tgt, w - 22)) : "") + detailNode;
+
+  const body = [];
+  if (name === "bash") {
+    const lines = r.replace(/^\(exit \d+\)\n?/, "").split("\n");
+    if (lines.length === 1 && lines[0] === "(no output)") { /* nothing to show */ }
+    else {
+      for (const l of lines.slice(0, 12)) body.push("    " + c.faint(clip(l, w - 4)));
+      if (lines.length > 12) body.push("    " + c.faint(`… +${lines.length - 12} lines`));
+    }
+  } else if (name === "diff") {
+    for (const l of r.split("\n").slice(0, 18)) {
+      const t = clip(l, w - 4);
+      body.push("    " + (t[0] === "+" ? c.green(t) : t[0] === "-" ? c.red(t) : c.faint(t)));
+    }
+    const extra = r.split("\n").length - 18;
+    if (extra > 0) body.push("    " + c.faint(`… +${extra} lines`));
+  }
+  return [head, ...body];
+}
+
 // a tiny spinner that runs while an async fn is pending
 export async function withSpinner(label, fn) {
   if (!process.stdout.isTTY) return fn();

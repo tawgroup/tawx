@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
 import { walkFiles } from "./tools.mjs";
-import { c, banner, renderMarkdown, createMdStream, bgLine, BG, visLen } from "./ui.mjs";
+import { c, banner, renderMarkdown, createMdStream, bgLine, BG, renderToolResult } from "./ui.mjs";
 import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, contextWindowFor, TAWX_DIR, listSessions, loadSession } from "./config.mjs";
 import { listModels, chat } from "./provider.mjs";
 import { saveClipboardImage } from "./clipboard.mjs";
@@ -508,17 +508,15 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   const startToolSpin = (name, preview) => {
     stopToolSpin();
     if (!process.stdout.isTTY) return;
-    const w = panelW();
-    const frames = name === "bash" ? ["🦖💨", " 🦖💨", "  🦖💨", "   🦖💨", "  🦖💨", " 🦖💨"] : ["☕", "☕.", "☕..", "☕..."];
-    const verb = name === "bash" ? "running bash" : `running ${name}`;
+    const sp = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const verb = name === "bash" ? "running" : name === "web_fetch" ? "fetching" : `running ${name}`;
     const short = String(preview || "").split("\n")[0].replace(/\s+/g, " ").slice(0, 54);
     let i = 0; toolSpinStarted = Date.now();
     toolSpin = setInterval(() => {
       const secs = Math.floor((Date.now() - toolSpinStarted) / 1000);
-      const text = `${frames[i++ % frames.length]} ${verb} · ${secs}s${short ? " · " + short : ""}`;
-      const msg = ` ${c.faint("▎")} ${c.muted(text)}`;
-      process.stdout.write("\r" + PANEL_PAD + bgLine(msg, w, BG.card));
-    }, 180);
+      const tail = c.muted(`${verb}${short ? " · " + short : ""}`) + (secs ? c.faint(` · ${secs}s`) : "");
+      process.stdout.write("\r\x1b[2K  " + c.accent(sp[i++ % sp.length]) + " " + tail);
+    }, 100);
   };
 
   // Writer that indents every line of streamed assistant output by 2 spaces, so
@@ -563,29 +561,23 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
             process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
           }
           break;
-        case "tool_call": {
-          // pi-style card header: a soft accent bar + the tool name, on a card bg.
-          const w = panelW();
-          const prev = String(ev.preview).split("\n")[0].slice(0, w - visLen(ev.name) - 8);
-          process.stdout.write(PANEL_PAD + bgLine(" " + c.soft("▌") + " " + c.bold(c.soft(ev.name)) + c.faint("  " + prev), w, BG.card) + "\n");
+        case "tool_call":
+          // Intent is shown by the live spinner (tool_start) and, for approval
+          // tools, the approve prompt — so the completed one-liner (tool_result)
+          // carries the record. update_plan renders via its own "plan" event.
           break;
-        }
         case "tool_start":
           startToolSpin(ev.name, ev.preview);
           break;
 
         case "tool_result": {
-          // Result body inside the same card: a faint left rail per line, bg-filled.
-          const w = panelW();
-          const lines = String(ev.result).split("\n");
-          for (const l of lines.slice(0, 6)) {
-            process.stdout.write(PANEL_PAD + bgLine(" " + c.faint("▎") + " " + c.muted(l.slice(0, w - 4)), w, BG.card) + "\n");
-          }
-          if (lines.length > 6) process.stdout.write(PANEL_PAD + bgLine(" " + c.faint("▎ … +" + (lines.length - 6) + " lines"), w, BG.card) + "\n");
+          if (ev.name === "update_plan") break; // the "plan" event already drew the checklist
+          for (const line of renderToolResult(ev.name, ev.result, ev.preview, COLS()))
+            process.stdout.write(line + "\n");
           break;
         }
         case "tool_denied":
-          process.stdout.write(PANEL_PAD + bgLine(" " + c.red("▌ ✗ denied"), panelW(), BG.card) + "\n");
+          process.stdout.write("  " + c.red("▏ ") + c.red("denied") + c.faint("  · skipped by you") + "\n");
           break;
         case "usage":
           if (ev.usage?.total_tokens) {
@@ -616,14 +608,16 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
           process.stdout.write("  " + c.faint(`♻ compacted → ~${ev.after} tok`) + "\n");
           break;
         case "plan": {
-          // Render the checklist as a small card: ✓ done, ▸ in-progress, ○ pending.
-          const w = panelW();
-          process.stdout.write(PANEL_PAD + bgLine(" " + c.soft("▌") + " " + c.bold(c.soft("plan")), w, BG.card) + "\n");
-          for (const it of ev.items || []) {
-            const mark =
-              it.status === "done" ? c.green("✓") : it.status === "in_progress" ? c.amber("▸") : c.faint("○");
-            const txt = it.status === "done" ? c.faint(it.step) : it.status === "in_progress" ? c.bold(it.step) : c.muted(it.step);
-            process.stdout.write(PANEL_PAD + bgLine(" " + c.faint("▎") + " " + mark + " " + txt.slice(0, w - 6), w, BG.card) + "\n");
+          // Flux-style checklist: a header with an N/M counter, then clean rows
+          // marked ✓ done · ◐ in-progress · ○ pending.
+          const items = ev.items || [];
+          const done = items.filter((i) => i.status === "done").length;
+          const w = Math.min(COLS() - 4, 100);
+          process.stdout.write("\n  " + c.accent("▏ ") + c.bold(c.accent("plan")) + c.faint(`  ${done}/${items.length}`) + "\n");
+          for (const it of items) {
+            const mark = it.status === "done" ? c.ok("✓") : it.status === "in_progress" ? c.accent("◐") : c.faint("○");
+            const txt = it.status === "done" ? c.faint(it.step) : it.status === "in_progress" ? c.text(it.step) : c.muted(it.step);
+            process.stdout.write("  " + mark + " " + txt.slice(0, w - 4) + "\n");
           }
           break;
         }
@@ -839,7 +833,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         }
         if (m.tool_calls?.length) {
           const names = m.tool_calls.map((tc) => tc.function?.name).filter(Boolean).join(", ");
-          process.stdout.write(PANEL_PAD + bgLine(" " + c.soft("▌") + " " + c.muted(names || "tools"), panelW(), BG.card) + "\n");
+          process.stdout.write("  " + c.soft("▏ ") + c.muted(names || "tools") + "\n");
         }
       }
     }

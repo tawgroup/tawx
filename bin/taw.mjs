@@ -7,7 +7,7 @@ import readline from "node:readline";
 import { createAgent } from "../src/agent.mjs";
 import { runTui } from "../src/tui.mjs";
 import { assertKey, MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, saveAuth, AUTH_PATH, VERSION, checkForUpdate, UPDATE_CMD, TAWX_DIR, SESSIONS_DIR, listSessions, loadSession } from "../src/config.mjs";
-import { c } from "../src/ui.mjs";
+import { c, renderToolResult } from "../src/ui.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "../src/codex-oauth.mjs";
 
 const argv = process.argv.slice(2);
@@ -33,15 +33,20 @@ function parseTask(flagNames) {
 const headlessEvents = {
   onEvent(ev) {
     if (ev.type === "assistant") process.stdout.write(c.bold("⏺ ") + ev.text.trim() + "\n");
-    else if (ev.type === "tool_call") process.stderr.write(c.green("⚒ ") + ev.name + c.dim(" " + String(ev.preview).split("\n")[0].slice(0, 100)) + "\n");
-    else if (ev.type === "tool_result") process.stderr.write(c.dim(String(ev.result).split("\n").slice(0, 3).join("\n").slice(0, 240)) + "\n");
+    else if (ev.type === "tool_result" && ev.name !== "update_plan") {
+      // same flux-style one-liner as the TUI, to stderr so stdout stays the answer
+      for (const line of renderToolResult(ev.name, ev.result, ev.preview, process.stderr.columns || 80))
+        process.stderr.write(line + "\n");
+    }
     else if (ev.type === "max_steps") process.stderr.write(c.yellow("⚠ reached step limit\n"));
     else if (ev.type === "compact_done") process.stderr.write(c.dim(`♻ compacted context → ~${ev.after} tok\n`));
     else if (ev.type === "plan") {
-      process.stderr.write(c.dim("▌ plan\n"));
-      for (const it of ev.items || []) {
-        const mark = it.status === "done" ? "✓" : it.status === "in_progress" ? "▸" : "○";
-        process.stderr.write(c.dim(`  ${mark} ${it.step}\n`));
+      const items = ev.items || [];
+      const done = items.filter((i) => i.status === "done").length;
+      process.stderr.write(c.accent("▏ ") + c.bold(c.accent("plan")) + c.faint(`  ${done}/${items.length}`) + "\n");
+      for (const it of items) {
+        const mark = it.status === "done" ? c.ok("✓") : it.status === "in_progress" ? c.accent("◐") : c.faint("○");
+        process.stderr.write("  " + mark + " " + it.step + "\n");
       }
     }
   },
