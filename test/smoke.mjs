@@ -180,5 +180,5 @@ const content = fs.readFileSync(path.join(liveDir, "hello.mjs"), "utf8");
 assert.ok(/TAW OK/.test(content), "file should contain TAW OK");
 ok("file content is correct");
 
-console.log(`\n${pass} checks passed ✓ — harness works end-to-end on ${PROVIDER}.`);
+console.log(`\n${pass} checks passed ✓ — tawx works end-to-end on ${PROVIDER}.`);
 process.exit(0);

@@ -1,6 +1,7 @@
-# AGENTS.md — tawx-harness
+# AGENTS.md — tawx
 
-This repo is a small PI-inspired, zero-dependency coding-agent harness. Keep it simple: core agent loop + a few built-in tools only. No skills, no MCP, no plugin system.
+This repo is a small, zero-dependency coding agent (`tawx`, installed at `~/.tawx/app`).
+Keep it simple: core agent loop + a few built-in tools only. No skills, no MCP, no plugin system.
 
 ## Rules when editing this repo
 - **No dependencies** unless absolutely required. Prefer Node built-ins.

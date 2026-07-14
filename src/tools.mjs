@@ -650,7 +650,7 @@ export const TOOLS = {
         const res = await fetch(url, {
           redirect: "follow",
           signal: ctrl.signal,
-          headers: { "user-agent": "tawx-harness (+https://github.com/tawgroup/tawx-harness)", accept: "text/html,text/plain,*/*" },
+          headers: { "user-agent": "tawx (+https://github.com/tawgroup/tawx)", accept: "text/html,text/plain,*/*" },
         });
         const ctype = (res.headers.get("content-type") || "").split(";")[0].trim();
         const raw = await res.text();

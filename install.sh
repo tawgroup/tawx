@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# tawx-harness installer. One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/tawgroup/tawx-harness/main/install.sh | bash
+# tawx installer. One-liner:
+#   curl -fsSL https://raw.githubusercontent.com/tawgroup/tawx/main/install.sh | bash
 set -euo pipefail
 
-REPO="https://github.com/tawgroup/tawx-harness.git"
-DIR="${TAWX_HOME:-$HOME/.tawx-harness}"
+REPO="https://github.com/tawgroup/tawx.git"
+DIR="${TAWX_HOME:-$HOME/.tawx/app}"
+LEGACY_DIR="$HOME/.tawx-harness"   # where releases before 0.19 installed
 
 echo "▟▙ tawx installer"
 
@@ -19,7 +20,15 @@ if [ "$NODE_MAJOR" -lt 20 ]; then
   exit 1
 fi
 
-# 2. Clone or update
+# 2. Clone or update. Pre-0.19 installs live in ~/.tawx-harness — move them over
+# rather than cloning a second copy that the old one keeps shadowing on PATH.
+if [ ! -d "$DIR/.git" ] && [ -d "$LEGACY_DIR/.git" ]; then
+  echo "→ Moving $LEGACY_DIR → $DIR"
+  mkdir -p "$(dirname "$DIR")"
+  mv "$LEGACY_DIR" "$DIR"
+  git -C "$DIR" remote set-url origin "$REPO"   # repo was renamed: tawx-harness → tawx
+fi
+
 if [ -d "$DIR/.git" ]; then
   echo "→ Updating $DIR"
   git -C "$DIR" pull --ff-only
@@ -45,8 +54,8 @@ else
     *)
       for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
         [ -e "$rc" ] || continue
-        grep -q 'tawx harness PATH' "$rc" 2>/dev/null || \
-          printf '\n# tawx harness PATH\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
+        grep -q 'tawx PATH' "$rc" 2>/dev/null || \
+          printf '\n# tawx PATH\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
       done
       echo "  → added ~/.local/bin to PATH. Open a NEW terminal, or run:"
       echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -54,10 +63,11 @@ else
   esac
 fi
 
-# 4. Config dir. Model + provider are stored per-provider in ~/.taw/auth.json
-# (set via `tawx login` or `tx login` / `/model` in the TUI), so we DON'T pin a model in .env —
+# 4. Config dir — must match TAWX_DIR in src/config.mjs (~/.tawx), which is where
+# auth.json and sessions live. Model + provider are stored per-provider in auth.json
+# (set via `tawx login` / `/model` in the TUI), so we DON'T pin a model in .env —
 # a hard-coded TAWX_MODEL would override the saved choice and break other providers.
-mkdir -p "$HOME/.taw" && chmod 700 "$HOME/.taw"
+mkdir -p "$HOME/.tawx" && chmod 700 "$HOME/.tawx"
 
 echo ""
 echo "✓ Done. Try:  tawx --help    (or just: tawx / tx)"

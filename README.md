@@ -1,14 +1,16 @@
-# ▟▙ tawx-harness
+# ▟▙ tawx
 
-A simple coding-agent harness. A model, a short loop, a few local tools — that's it. No Skills, no MCP, no plugins. Zero deps, Node 20+ or Bun.
+A simple coding agent. A model, a short loop, a few local tools — that's it. No Skills, no MCP, no plugins. Zero deps, Node 20+ or Bun.
 
 ![tawx command cheat sheet](assets/tawx-cheatsheet-v2.png)
 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tawgroup/tawx-harness/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tawgroup/tawx/main/install.sh | bash
 ```
+
+Installs to `~/.tawx/app`; config and sessions live in `~/.tawx`.
 
 ## Setup
 
@@ -28,6 +30,7 @@ Useful TUI commands:
 
 ```text
 /model        pick the model — ↑/↓ to choose (or /model <id>)
+/effort       how hard the model thinks — none…max (gpt-5.x), or auto
 /provider     switch provider (restarts tawx)
 /login        add or re-authenticate a provider
 /session      show provider, model, tokens & cost

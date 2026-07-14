@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tawx-harness CLI entry. Modes: TUI (default), headless run, self-verify build, models, help.
+// tawx CLI entry. Modes: TUI (default), headless run, self-verify build, models, help.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -119,7 +119,7 @@ async function useProvider(providerArg = "") {
   process.stdout.write(c.dim(`  model: ${next.providers[provider].model}\n  auth: ${AUTH_PATH}\n`));
 }
 
-const HELP = `tawx — minimal coding agent harness
+const HELP = `tawx — minimal coding agent
 
 Usage:
   tawx                         open interactive TUI (chat)

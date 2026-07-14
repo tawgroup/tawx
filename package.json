@@ -1,7 +1,7 @@
 {
-  "name": "tawx-harness",
-  "version": "0.18.0",
-  "description": "Tiny PI-inspired coding agent harness with just simple tools and configurable OpenAI-compatible provider support. Zero dependencies, runs on Node 20+ or Bun.",
+  "name": "tawx",
+  "version": "0.19.0",
+  "description": "Tiny coding agent: a model, a short loop, a few local tools. Configurable OpenAI-compatible / Codex / Claude providers. Zero dependencies, runs on Node 20+ or Bun.",
   "type": "module",
   "bin": {
     "tawx": "bin/taw.mjs",
@@ -21,7 +21,7 @@
   "keywords": [
     "ai",
     "coding-agent",
-    "harness",
+    "tawx",
     "opencode",
     "claude",
     "cli",

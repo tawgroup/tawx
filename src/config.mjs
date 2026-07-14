@@ -1,4 +1,4 @@
-// tawx-harness config — resolves provider, auth, base URL, model from env/.env/auth.json/CLI.
+// tawx config — resolves provider, auth, base URL, model from env/.env/auth.json/CLI.
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -13,7 +13,7 @@ export const VERSION = (() => {
 })();
 
 // Repo on GitHub — used by the install one-liner and the update check.
-export const REPO_RAW = "https://raw.githubusercontent.com/tawgroup/tawx-harness/main";
+export const REPO_RAW = "https://raw.githubusercontent.com/tawgroup/tawx/main";
 export const UPDATE_CMD = `curl -fsSL ${REPO_RAW}/install.sh | bash`;
 
 // a > b for dotted numeric versions ("0.2.0" > "0.1.9"). Non-numeric parts → 0.
