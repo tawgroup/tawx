@@ -4,7 +4,7 @@ import { chat } from "./provider.mjs";
 import { TOOLS, renderPlan } from "./tools.mjs";
 import { systemPrompt } from "./prompt.mjs";
 import { maybeCompact } from "./compact.mjs";
-import { DEFAULT_MODEL, MAX_STEPS } from "./config.mjs";
+import { DEFAULT_MODEL, DEFAULT_EFFORT, MAX_STEPS } from "./config.mjs";
 
 const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
 const IMG_MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
@@ -53,6 +53,7 @@ function safeParse(s) {
 export function createAgent(opts = {}) {
   const cwd = opts.cwd || process.cwd();
   let model = opts.model || DEFAULT_MODEL;
+  let effort = opts.effort ?? DEFAULT_EFFORT; // "" = let the model pick its own level
   const onEvent = opts.onEvent || (() => {});
   const approve = opts.approve || (async () => true);
   const maxSteps = opts.maxSteps || MAX_STEPS;
@@ -126,6 +127,7 @@ export function createAgent(opts = {}) {
         messages,
         tools,
         model,
+        effort,
         cwd,
         signal,
         onToken: stream ? (t) => onEvent({ type: "assistant_delta", text: t }) : undefined,
@@ -211,6 +213,12 @@ export function createAgent(opts = {}) {
       // Keep the system prompt's stated model name in sync, otherwise the agent
       // keeps introducing itself as the old model after a /model switch.
       messages[0] = { role: "system", content: systemPrompt({ cwd, model }) };
+    },
+    get effort() {
+      return effort;
+    },
+    setEffort(e) {
+      effort = e || "";
     },
     reset() {
       messages.length = 1; // keep system

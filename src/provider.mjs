@@ -1,6 +1,6 @@
 // Model clients: OpenAI-compatible chat/completions + Anthropic Messages + Claude Code CLI.
 import { spawn } from "node:child_process";
-import { BASE_URL, API_KEY, MAX_TOKENS, REQUEST_TIMEOUT_MS, PROVIDER_CONFIG, PROVIDER, AUTH, SAVED_PROVIDER, saveAuth } from "./config.mjs";
+import { BASE_URL, API_KEY, MAX_TOKENS, REQUEST_TIMEOUT_MS, PROVIDER_CONFIG, PROVIDER, AUTH, SAVED_PROVIDER, saveAuth, effortsFor } from "./config.mjs";
 import { codexAccountId, refreshCodexOAuth } from "./codex-oauth.mjs";
 
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -335,7 +335,7 @@ async function codexToken() {
   return { access, accountId: oauth?.accountId || codexAccountId(access) };
 }
 
-async function chatCodex({ messages, tools, model, signal, onToken }) {
+async function chatCodex({ messages, tools, model, effort, signal, onToken }) {
   const { instructions, input } = toCodexInput(messages);
   const { access, accountId } = await codexToken();
   const body = {
@@ -349,6 +349,9 @@ async function chatCodex({ messages, tools, model, signal, onToken }) {
     tool_choice: "auto",
     parallel_tool_calls: true,
   };
+  // Only send a level the model actually accepts — e.g. "ultra" is valid on
+  // gpt-5.6-sol but a 400 on luna, and switching models mid-session is one keypress.
+  if (effort && effortsFor(model).includes(effort)) body.reasoning = { effort };
   const rtools = responsesTools(tools);
   if (rtools.length) body.tools = rtools;
 

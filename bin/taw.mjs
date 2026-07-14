@@ -6,7 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { createAgent } from "../src/agent.mjs";
 import { runTui } from "../src/tui.mjs";
-import { assertKey, MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, saveAuth, AUTH_PATH, VERSION, checkForUpdate, UPDATE_CMD, TAWX_DIR, SESSIONS_DIR, listSessions, loadSession } from "../src/config.mjs";
+import { assertKey, MODELS, DEFAULT_MODEL, DEFAULT_EFFORT, PROVIDER, PROVIDERS, AUTH, saveAuth, AUTH_PATH, VERSION, checkForUpdate, UPDATE_CMD, TAWX_DIR, SESSIONS_DIR, listSessions, loadSession } from "../src/config.mjs";
 import { c, renderToolResult } from "../src/ui.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "../src/codex-oauth.mjs";
 
@@ -53,6 +53,8 @@ const headlessEvents = {
 };
 
 const model = getFlag("--model", DEFAULT_MODEL);
+// Reasoning level for gpt-5.x/codex models; "" = the model's own default.
+const effort = getFlag("--effort", DEFAULT_EFFORT);
 
 async function prompt(q, def = "") {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -138,6 +140,7 @@ Usage:
 
 Options:
   --model <id>                 pick a model (default ${DEFAULT_MODEL})
+  --effort <level>             reasoning level for gpt-5.x (none|low|medium|high|xhigh|max)
   --max-steps <n>              max agent steps per round
   --cwd <path>                 working directory
   --task-file <path>           read the task from a file (keeps the cmdline short & safe)
@@ -151,6 +154,7 @@ Env:
   TAWX_PROVIDER=<opencode|codex|claude>
   TAWX_API_KEY=<key>                override saved provider key
   TAWX_MODEL=<model>                override saved/default model
+  TAWX_EFFORT=<level>               override saved/default reasoning level
   TAWX_BASE_URL=<url>               override provider endpoint
   TAWX_REQUEST_TIMEOUT=<ms>         per-request timeout (default 180000)
 `;
@@ -187,7 +191,7 @@ function mapCaseTools(csv) {
 // Walk argv: value-flags consume the next token, bare-flags stand alone, and
 // whatever is left is the prompt (taw-case passes it as the final positional).
 function parseCaseArgs() {
-  const VALUE = new Set(["--model", "--mode", "--tools", "--max-steps", "--cwd",
+  const VALUE = new Set(["--model", "--effort", "--mode", "--tools", "--max-steps", "--cwd",
     "--append-system-prompt", "--provider", "--skill", "--task-file"]);
   const flags = {};
   const prompt = [];
@@ -217,7 +221,7 @@ async function runCase() {
   const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\n");
   let reachedLimit = false;
   const agent = createAgent({
-    model: caseModel, cwd, maxSteps, tools: allowTools, approve: async () => true,
+    model: caseModel, effort: flags["--effort"] ?? effort, cwd, maxSteps, tools: allowTools, approve: async () => true,
     onEvent(ev) {
       // stream tool starts so the orchestrator shows live progress
       if (ev.type === "tool_start")
@@ -302,12 +306,12 @@ async function main() {
     const taskFile = getFlag("--task-file", "");
     const task = taskFile
       ? fs.readFileSync(taskFile, "utf8").trim()
-      : parseTask(["--model", "--max-steps", "--cwd", "--task-file"]);
+      : parseTask(["--model", "--effort", "--max-steps", "--cwd", "--task-file"]);
     if (!task) { process.stderr.write("Missing task.\n"); process.exit(2); }
 
     const cwd = getFlag("--cwd", process.cwd());
     const maxSteps = Number(getFlag("--max-steps", 0)) || undefined;
-    const agent = createAgent({ model, cwd, maxSteps, approve: async () => true, ...headlessEvents });
+    const agent = createAgent({ model, effort, cwd, maxSteps, approve: async () => true, ...headlessEvents });
     try {
       await agent.send(task);
     } catch (e) {
@@ -322,7 +326,7 @@ async function main() {
     const taskFile = getFlag("--task-file", "");
     const task = taskFile
       ? fs.readFileSync(taskFile, "utf8").trim()
-      : parseTask(["--model", "--max-steps", "--cwd", "--verify", "--rounds", "--task-file"]);
+      : parseTask(["--model", "--effort", "--max-steps", "--cwd", "--verify", "--rounds", "--task-file"]);
     const verify = getFlag("--verify", "");
     const rounds = Number(getFlag("--rounds", 4)) || 4;
     const cwd = getFlag("--cwd", process.cwd());
@@ -330,7 +334,7 @@ async function main() {
     if (!task) { process.stderr.write("Missing task.\n"); process.exit(2); }
     if (!verify) { process.stderr.write('build needs --verify "<command>" (exit 0 = pass).\n'); process.exit(2); }
 
-    const agent = createAgent({ model, cwd, maxSteps, approve: async () => true, ...headlessEvents });
+    const agent = createAgent({ model, effort, cwd, maxSteps, approve: async () => true, ...headlessEvents });
 
     let prompt =
       task +

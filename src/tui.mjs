@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { createAgent } from "./agent.mjs";
 import { walkFiles } from "./tools.mjs";
 import { c, banner, renderMarkdown, createMdStream, bgLine, BG, renderToolResult } from "./ui.mjs";
-import { MODELS, DEFAULT_MODEL, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, contextWindowFor, TAWX_DIR, listSessions, loadSession } from "./config.mjs";
+import { MODELS, DEFAULT_MODEL, DEFAULT_EFFORT, effortsFor, PROVIDER, PROVIDERS, AUTH, AUTH_PATH, saveAuth, VERSION, checkForUpdate, UPDATE_CMD, contextWindowFor, TAWX_DIR, listSessions, loadSession } from "./config.mjs";
 import { listModels, chat } from "./provider.mjs";
 import { saveClipboardImage } from "./clipboard.mjs";
 import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
@@ -17,14 +17,21 @@ import { loginCodexBrowser, loginCodexDeviceCode } from "./codex-oauth.mjs";
 // available (see refreshModels in runTui). All model UI reads from here.
 let modelList = [...MODELS];
 
+// Reasoning levels on offer follow the active model — gpt-5.6 reaches "max",
+// older gpt-5.x stops at "xhigh". "auto" drops the override and lets the model
+// use its own default level.
+let activeModel = DEFAULT_MODEL;
+const effortList = () => ["auto", ...effortsFor(activeModel)];
+
 // Visible / autocompleted commands. /models, /whoami, /use still work as hidden
 // aliases (handled in the dispatcher) so muscle memory doesn't break.
-const COMMANDS = ["/help", "/new", "/session", "/model", "/provider", "/login", "/tree", "/resume", "/goal", "/yolo", "/safe", "/clear", "/exit"];
+const COMMANDS = ["/help", "/new", "/session", "/model", "/effort", "/provider", "/login", "/tree", "/resume", "/goal", "/yolo", "/safe", "/clear", "/exit"];
 const COMMAND_DESC = {
   "/help": "show help",
   "/new": "start a fresh conversation (keeps the current one saved)",
   "/session": "show provider, model, tokens & cost for this conversation",
   "/model": "pick the model — ↑/↓ to choose, or /model <id>",
+  "/effort": "how hard the model thinks — ↑/↓ to choose, or /effort <level>",
   "/provider": "switch provider (restarts tawx)",
   "/login": "add or re-authenticate a provider",
   "/tree": "browse the conversation timeline — jump back & branch",
@@ -112,6 +119,12 @@ function liveSuggest(line) {
     const prefix = parts[1] || "";
     return modelList.filter((m) => m.startsWith(prefix)).map((m) => ({ value: `/model ${m}`, label: c.bold(`/model ${m}`) }));
   }
+  if (head === "/effort") {
+    const prefix = parts[1] || "";
+    return effortList()
+      .filter((e) => e.startsWith(prefix))
+      .map((e) => ({ value: `/effort ${e}`, label: c.bold(`/effort ${e}`) }));
+  }
   // Top-level command: only suggest while still typing the command word.
   if (parts.length > 1) return [];
   return COMMANDS.filter((cmd) => cmd.startsWith(head)).map((cmd) => ({
@@ -150,6 +163,12 @@ function complete(line) {
     const prefix = parts[1] || "";
     const hits = modelList.filter((m) => m.startsWith(prefix)).map((m) => `/model ${m}`);
     return [hits.length ? hits : modelList.map((m) => `/model ${m}`), s];
+  }
+  if (parts[0] === "/effort") {
+    const prefix = parts[1] || "";
+    const all = effortList();
+    const hits = all.filter((e) => e.startsWith(prefix)).map((e) => `/effort ${e}`);
+    return [hits.length ? hits : all.map((e) => `/effort ${e}`), s];
   }
 
   const hits = COMMANDS.filter((cmd) => cmd.startsWith(s));
@@ -219,6 +238,7 @@ ${c.muted("Available commands:")}
   ${c.bold("/new")}       ${c.faint("Start a fresh conversation (keeps the current one saved)")}
   ${c.bold("/session")}   ${c.faint("Show provider, model, tokens & cost")}
   ${c.bold("/model")}     ${c.faint("Pick the model — ↑/↓ to choose, or /model <id>")}
+  ${c.bold("/effort")}    ${c.faint("How hard the model thinks — none…max, or auto (/effort <level>)")}
   ${c.bold("/provider")}  ${c.faint("Switch provider (restarts tawx)")}
   ${c.bold("/login")}     ${c.faint("Add or re-authenticate a provider")}
   ${c.bold("/tree")}      ${c.faint("Jump back to / branch an earlier turn")}
@@ -632,6 +652,9 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     },
   });
   agent.setModel(model);
+  activeModel = model;
+  // A saved effort from an older model may not exist on this one (e.g. "ultra" → luna).
+  if (agent.effort && !effortsFor(model).includes(agent.effort)) agent.setEffort("");
 
   // Session log: each run gets an id and is saved to ~/.tawx/sessions/<id>.json so
   // you can review it later (see `tawx sessions`). Updated after every turn.
@@ -850,7 +873,11 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     const msgs = (sess?.messages || []).filter((m) => m.role !== "system");
     if (!msgs.length) return false;
     agent.setMessages(msgs);
-    if (sess.model) agent.setModel(sess.model);
+    if (sess.model) {
+      agent.setModel(sess.model);
+      activeModel = sess.model;
+      if (agent.effort && !effortsFor(sess.model).includes(agent.effort)) agent.setEffort("");
+    }
     if (sess.id) { sessionId = sess.id; sessionFile = path.join(SESS_DIR, `${sessionId}.json`); }
     if (sess.started) startedAt = sess.started;
     activeGoal = sess.goal || null;
@@ -893,11 +920,24 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   // Switch the model live + persist it for the active provider (survives restart).
   const applyModel = (picked) => {
     agent.setModel(picked);
+    activeModel = picked; // /effort offers the levels THIS model accepts
+    // A level the new model doesn't take would 400 on the next call — drop it.
+    if (agent.effort && !effortsFor(picked).includes(agent.effort)) agent.setEffort("");
     const cur = AUTH.providers?.[PROVIDER] || {};
     AUTH.providers = { ...(AUTH.providers || {}), [PROVIDER]: { ...cur, model: picked, baseUrl: cur.baseUrl || PROVIDERS[PROVIDER]?.baseUrl || "" } };
     AUTH.active = AUTH.active || PROVIDER;
     saveAuth(AUTH);
     process.stdout.write(c.dim(`  model → ${c.bold(picked)} (saved for ${PROVIDER})\n`));
+  };
+
+  // Same, for the reasoning level. "auto" (or "") = send none, model decides.
+  const applyEffort = (picked) => {
+    const effort = picked === "auto" ? "" : picked;
+    agent.setEffort(effort);
+    const cur = AUTH.providers?.[PROVIDER] || {};
+    AUTH.providers = { ...(AUTH.providers || {}), [PROVIDER]: { ...cur, effort } };
+    saveAuth(AUTH);
+    process.stdout.write(c.dim(`  effort → ${c.bold(effort || "auto")} (saved for ${PROVIDER})\n`));
   };
 
   // Modal picker over saved sessions — ↑/↓ move, Enter open, Esc cancel. Returns
@@ -1102,7 +1142,7 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         const lines = [
           `  ${c.bold("session")} ${c.accent("#" + sessionId.slice(-4))}  ${c.dim(sessionId)}`,
           `  file:     ${c.dim(f)}`,
-          `  model:    ${agent.model} ${c.dim("· " + PROVIDER + (autoApprove ? " · YOLO" : " · safe"))}`,
+          `  model:    ${agent.model} ${c.dim("· " + PROVIDER + " · effort " + (agent.effort || "auto") + (autoApprove ? " · YOLO" : " · safe"))}`,
           `  messages: ${n}`,
         ];
         if (lastTokens) lines.push(`  context:  ${fmtK(lastTokens)}/${fmtK(win)} ${c.dim(`(${Math.round((lastTokens / win) * 100)}%)`)}`);
@@ -1122,6 +1162,20 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
           const items = modelList.map((m) => ({ value: m, label: m + (m === agent.model ? c.ok("  ● current") : "") }));
           const picked = await pickFromMenu(items, { prompt: `model for ${PROVIDER} — ↑/↓ · Enter · Esc`, initial: Math.max(0, modelList.indexOf(agent.model)) });
           if (picked) applyModel(picked); else { process.stdout.write(c.dim(`  (kept ${agent.model})\n`)); drawChromeIdle(); }
+        }
+      }
+      else if (cmd === "effort") {
+        const levels = effortList(); // ["auto", ...levels this model accepts]
+        if (levels.length === 1) { process.stdout.write(c.yellow(`  ${agent.model} takes no reasoning level\n`)); continue; }
+        const current = agent.effort || "auto";
+        if (rest[0]) {
+          const picked = levels.includes(rest[0]) ? rest[0] : "";
+          if (!picked) process.stdout.write(c.yellow(`  ${agent.model} has no "${rest[0]}" level\n`) + c.dim(`  available: ${levels.join(" · ")}\n`));
+          else applyEffort(picked);
+        } else {
+          const items = levels.map((e) => ({ value: e, label: e + (e === current ? c.ok("  ● current") : "") }));
+          const picked = await pickFromMenu(items, { prompt: `effort for ${agent.model} — ↑/↓ · Enter · Esc`, initial: Math.max(0, levels.indexOf(current)) });
+          if (picked) applyEffort(picked); else { process.stdout.write(c.dim(`  (kept ${current})\n`)); drawChromeIdle(); }
         }
       }
       else if (cmd === "provider" || cmd === "use" || cmd === "whoami") {

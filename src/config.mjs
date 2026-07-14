@@ -117,8 +117,11 @@ export const PROVIDERS = {
     label: "ChatGPT Plus/Pro (Codex Subscription)",
     baseUrl: "https://chatgpt.com/backend-api",
     keyEnv: "OPENAI_CODEX_ACCESS_TOKEN",
-    defaultModel: "gpt-5.5",
-    models: ["gpt-5.5", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2-codex", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5-codex"],
+    defaultModel: "gpt-5.6-sol",
+    // Ordered like the Codex picker (most capable first). gpt-5.6 comes in three
+    // flavours — sol (frontier), terra (balanced), luna (fast) — all with a 372k
+    // window, see CONTEXT_WINDOWS below.
+    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2-codex", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5-codex"],
   },
   claude: {
     type: "claude-cli",
@@ -150,6 +153,28 @@ export const DEFAULT_MODEL = SAVED_PROVIDER.model || process.env.TAWX_MODEL || P
 export const MODELS = PROVIDER_CONFIG.models;
 export const GO_MODELS = PROVIDERS.opencode.models; // backwards-compatible export
 
+// ---- Reasoning effort (codex / gpt-5.x) ---------------------------------
+// How hard the model thinks. gpt-5.6 reaches "max"; older gpt-5.x tops out at
+// "xhigh" and 400s on "max". Sol defaults to "low" server-side, so without a way
+// to raise it the flagship would silently run at its cheapest setting. An empty
+// effort means "send none" — the model's own default wins.
+// Levels verified against the live /codex/responses API, NOT the Codex client's
+// model manifest: that manifest also advertises "ultra", which the API rejects
+// (it's a client-side preset), so it is deliberately absent here.
+const EFFORT_LEVELS = [
+  [/gpt-5\.6/i, ["none", "low", "medium", "high", "xhigh", "max"]],
+  [/gpt-5|codex/i, ["none", "low", "medium", "high", "xhigh"]],
+];
+
+// Reasoning levels the given model accepts; [] when it takes no reasoning param.
+export function effortsFor(model = "") {
+  for (const [re, levels] of EFFORT_LEVELS) if (re.test(model)) return levels;
+  return [];
+}
+
+// Chosen level, or "" to let the model decide. Persisted per provider in auth.json.
+export const DEFAULT_EFFORT = process.env.TAWX_EFFORT || SAVED_PROVIDER.effort || "";
+
 export const MAX_STEPS = Number(process.env.TAWX_MAX_STEPS || 200);
 export const MAX_TOKENS = Number(process.env.TAWX_MAX_TOKENS || 8192);
 export const REQUEST_TIMEOUT_MS = Number(process.env.TAWX_REQUEST_TIMEOUT || 180000);
@@ -162,6 +187,7 @@ export const REQUEST_TIMEOUT_MS = Number(process.env.TAWX_REQUEST_TIMEOUT || 180
 // checked before) these built-ins. Edit that file to tweak a window; no code
 // change / release needed.
 const CONTEXT_WINDOWS = [
+  [/gpt-5\.6/i, 372000], // sol / terra / luna — must stay above the generic gpt-5 rule
   [/gpt-5|codex/i, 272000],
   [/claude|sonnet|opus|haiku/i, 200000],
   [/glm|kimi|qwen|deepseek|minimax|mimo|hy3/i, 200000], // opencode models
@@ -179,7 +205,8 @@ function loadContextOverrides() {
     if (!fs.existsSync(CONTEXT_WINDOWS_PATH)) {
       const seed = {
         _comment: "Override/add model→context-window (tokens). Key = regex matched (case-insensitive) against the model id; first match wins and these are checked BEFORE the built-in defaults. Edit freely — no code change needed. Env TAWX_CONTEXT_WINDOW overrides everything.",
-        "gpt-5.5": 272000,
+        "gpt-5\\.6": 372000,
+        "gpt-5\\.5": 272000,
       };
       fs.mkdirSync(TAWX_DIR, { recursive: true, mode: 0o700 });
       fs.writeFileSync(CONTEXT_WINDOWS_PATH, JSON.stringify(seed, null, 2) + "\n", { mode: 0o600 });
