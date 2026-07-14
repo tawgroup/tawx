@@ -50,10 +50,12 @@ function justify(left, right, cols) {
 }
 
 // Compact two-line header + a thin subtle rule.
-export function banner({ version = "", cwd = "", session = "", cols = 80 } = {}) {
+export function banner({ version = "", cwd = "", branch = "", session = "", cols = 80 } = {}) {
   const w = Math.min(cols || 80, 120);
   const logo = "  " + c.bold(c.brand("◢◣ tawx")) + (version ? "  " + c.faint("v" + version) : "");
-  const right = (cwd ? c.muted(cwd) : "") + (session ? c.faint(`  ·  ${session}`) : "");
+  const right = (cwd ? c.muted(cwd) : "")
+    + (branch ? "  " + c.soft("⎇ " + branch) : "")
+    + (session ? c.faint(`  ·  ${session}`) : "");
   const rule = "  " + c.faint("─".repeat(Math.max(0, w - 4)));
   // pi-style one-line shortcut hint under the rule.
   const hint = "  " + c.faint("/ commands") + c.faint(" · ") + c.faint("↑↓ recall")

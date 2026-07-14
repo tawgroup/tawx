@@ -686,12 +686,23 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     } catch { /* never block the session on a save error */ }
   };
 
+  // Current git branch, read once at startup (the banner/footer show where the
+  // session STARTED; we don't chase mid-session checkouts). Empty outside a
+  // repo or on a detached HEAD.
+  const gitBranch = (() => {
+    try {
+      const r = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: process.cwd(), encoding: "utf8", timeout: 800 });
+      const b = (r.stdout || "").trim();
+      return r.status === 0 && b && b !== "HEAD" ? b : "";
+    } catch { return ""; }
+  })();
+
   // Reprint the top banner (used at startup and when re-rendering after a rewind).
   const printBanner = () => {
     const home = os.homedir();
     let proj = process.cwd();
     if (proj === home) proj = "~"; else if (proj.startsWith(home + "/")) proj = "~" + proj.slice(home.length);
-    process.stdout.write(banner({ version: VERSION, cwd: proj, session: `session ${sessionId.slice(-4)}`, cols: process.stdout.columns || 80 }));
+    process.stdout.write(banner({ version: VERSION, cwd: proj, branch: gitBranch, session: `session ${sessionId.slice(-4)}`, cols: process.stdout.columns || 80 }));
   };
 
   // Pull human-readable text out of a message's content (string OR multimodal array).
