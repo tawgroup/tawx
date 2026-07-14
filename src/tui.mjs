@@ -249,7 +249,7 @@ ${c.muted("Available commands:")}
   ${c.bold("/clear")}     ${c.faint("Clear conversation history")}
   ${c.bold("/exit")}      ${c.faint("Quit tawx")}
 
-${c.muted("Keys:")}  ${c.faint("↑/↓ recall · / commands · @ file refs · Tab/→ accept · Ctrl-C interrupt")}`;
+${c.muted("Keys:")}  ${c.faint("↑/↓ recall · / commands · @ file refs · Tab/→ accept · Esc/Ctrl-C interrupt")}`;
 
 export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
   // historySize:0 hands ↑/↓ to us — we drive the suggestion dropdown with them
@@ -1058,15 +1058,23 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     }
   };
 
-  // Ctrl-C: cancel the in-flight turn (like Claude Code). Pressing it when idle exits.
+  // Esc or Ctrl-C: cancel the in-flight turn (like Claude Code). Ctrl-C when idle exits.
   let aborter = null;
+  const interruptTurn = () => {
+    aborter.abort();
+    stopSpin();
+    stopToolSpin();
+    if (mdStream) { mdStream.end(); mdStream = null; }
+    process.stdout.write(c.yellow("\n  ⎋ interrupting…\n"));
+  };
+  // Esc only ever interrupts a running turn — when idle it stays reserved for
+  // the modal pickers (/model, /tree, /resume), which gate on aborter === null.
+  process.stdin.on("keypress", (_s, key) => {
+    if (key?.name === "escape" && aborter) interruptTurn();
+  });
   rl.on("SIGINT", () => {
     if (aborter) {
-      aborter.abort();
-      stopSpin();
-      stopToolSpin();
-      if (mdStream) { mdStream.end(); mdStream = null; }
-      process.stdout.write(c.yellow("\n  ⎋ interrupting…\n"));
+      interruptTurn();
     } else {
       cleanupLayout();
       process.stdout.write("\x1b[?2004l"); // disable bracketed paste

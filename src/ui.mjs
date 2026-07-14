@@ -57,7 +57,7 @@ export function banner({ version = "", cwd = "", session = "", cols = 80 } = {})
   const rule = "  " + c.faint("─".repeat(Math.max(0, w - 4)));
   // pi-style one-line shortcut hint under the rule.
   const hint = "  " + c.faint("/ commands") + c.faint(" · ") + c.faint("↑↓ recall")
-    + c.faint(" · ") + c.faint("ctrl-c interrupt") + c.faint(" · ") + c.faint("ctrl-c again to exit");
+    + c.faint(" · ") + c.faint("esc interrupt") + c.faint(" · ") + c.faint("ctrl-c exit");
   return "\n" + justify(logo, right + "  ", w) + "\n" + rule + "\n" + hint + "\n";
 }
 
