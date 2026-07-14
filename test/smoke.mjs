@@ -99,7 +99,7 @@ ok("apply_patch (new file)");
 // Markdown rendering (pi-style): blockquote border, horizontal rule, ordered list,
 // nested bullets. Asserts on structure (NO_COLOR keeps output plain in CI).
 const md = renderMarkdown("### H3\n> quote\n1. one\n- a\n  - b\n\n---");
-assert.ok(md.includes("### H3"), "h3 keeps its prefix");
+assert.ok(md.includes("H3") && !md.includes("###"), "h3 renders without raw ### syntax");
 assert.ok(md.includes("│ quote"), "blockquote gets a │ border");
 assert.ok(md.includes("1. one"), "ordered list keeps its number");
 assert.ok(md.includes("• a") && md.includes("  • b"), "nested bullets indent");

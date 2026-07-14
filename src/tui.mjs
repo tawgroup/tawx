@@ -539,14 +539,17 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
     }, 100);
   };
 
-  // Writer that indents every line of streamed assistant output by 2 spaces, so
-  // the answer reads as an indented block under the "◆ tawx" label.
+  // Every line of an assistant reply carries a faint left border, so the block
+  // under "◆ tawx" reads as one visually-grouped message (user turns keep the
+  // accent "❯" prompt, tool lines their tinted "▏" — three distinct surfaces).
+  const GUTTER = c.faint("▏ ");
+  const gutterBody = (s) => GUTTER + s.replace(/\n/g, "\n" + GUTTER);
   const indentWriter = () => {
     let atStart = true;
     return (s) => {
       let out = "";
       for (const ch of s) {
-        if (atStart) { out += "  "; atStart = false; }
+        if (atStart) { out += GUTTER; atStart = false; }
         out += ch;
         if (ch === "\n") atStart = true;
       }
@@ -577,8 +580,8 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
         case "assistant":
           if (mdStream) { mdStream.end(); mdStream = null; }
           else if (ev.text?.trim()) {
-            const body = renderMarkdown(ev.text.trim()).replace(/\n/g, "\n  ");
-            process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
+            const body = gutterBody(renderMarkdown(ev.text.trim()));
+            process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n" + body + "\n");
           }
           break;
         case "tool_call":
@@ -851,8 +854,8 @@ export async function runTui({ model = DEFAULT_MODEL, resume = null } = {}) {
       } else if (m.role === "assistant") {
         const t = textOf(m.content).trim();
         if (t) {
-          const body = renderMarkdown(t).replace(/\n/g, "\n  ");
-          process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n  " + body + "\n");
+          const body = gutterBody(renderMarkdown(t));
+          process.stdout.write("\n" + c.soft("◆") + " " + c.bold(c.soft("tawx")) + "\n" + body + "\n");
         }
         if (m.tool_calls?.length) {
           const names = m.tool_calls.map((tc) => tc.function?.name).filter(Boolean).join(", ");

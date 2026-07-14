@@ -1,6 +1,6 @@
 {
   "name": "tawx",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Tiny coding agent: a model, a short loop, a few local tools. Configurable OpenAI-compatible / Codex / Claude providers. Zero dependencies, runs on Node 20+ or Bun.",
   "type": "module",
   "bin": {

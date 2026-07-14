@@ -76,6 +76,27 @@ function renderInline(s) {
 
 const hrWidth = () => Math.min((process.stdout.columns || 80) - 4, 56);
 
+// Reading measure for assistant prose: on very wide terminals a line can run
+// 150+ chars, which is exhausting to scan. Cap the text column at ~96 visible
+// cols (minus the 2-col gutter the TUI adds) and wrap at word boundaries.
+const measure = () => Math.max(30, Math.min((process.stdout.columns || 80) - 6, 96));
+
+// Word-wrap `s` to `width` visible columns (ANSI-aware). Continuation lines get
+// the `hang` prefix (e.g. spaces aligning under a list bullet). A single word
+// longer than a whole line is left unbroken — the terminal hard-wraps those.
+export function wrapAnsi(s, width, hang = "") {
+  if (visLen(s) <= width) return s;
+  const out = [];
+  let line = "";
+  for (const word of String(s).split(" ")) {
+    if (!line) { line = word; continue; }
+    if (visLen(line) + 1 + visLen(word) <= width) line += " " + word;
+    else { out.push(line); line = hang + word; }
+  }
+  if (line) out.push(line);
+  return out.join("\n");
+}
+
 // A stateful per-line renderer (carries fenced-code-block state across lines).
 // Returns a function(line) -> rendered string, or null for lines to drop (fence markers).
 function lineRenderer() {
@@ -88,26 +109,31 @@ function lineRenderer() {
     // Horizontal rule: --- / *** / ___ alone on a line → a thin faint divider.
     if (/^\s*([-*_])\1{2,}\s*$/.test(line)) return c.faint("─".repeat(hrWidth()));
 
-    // Headings by level: H1 underlined+bold, H2 bold, H3+ keep a dim "#" prefix.
+    // Headings by level: H1 underlined+bold, H2 bold, H3+ bold in the soft
+    // accent — rendered, never the raw "###" syntax.
     const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
     if (h) {
       const lvl = h[1].length, txt = renderInline(h[2]);
       if (lvl === 1) return c.bold(c.underline(c.brand(txt)));
       if (lvl === 2) return c.bold(c.brand(txt));
-      return c.faint("#".repeat(lvl) + " ") + c.bold(c.soft(txt));
+      return c.bold(c.soft(txt));
     }
 
     // Blockquote: pi-style "│ " border in a muted tone.
     const q = line.match(/^\s*>\s?(.*)$/);
-    if (q) return c.faint("│ ") + c.muted(renderInline(q[1]));
+    if (q) return wrapAnsi(c.faint("│ ") + c.muted(renderInline(q[1])), measure(), c.faint("│ "));
 
     // Ordered list: keep the number, tint the marker.
     const ol = line.match(/^(\s*)(\d+)([.)])\s+(.*)$/);
-    if (ol) return ol[1] + c.soft(ol[2] + ol[3]) + " " + renderInline(ol[4]);
+    if (ol) {
+      const hang = " ".repeat(ol[1].length + ol[2].length + 2);
+      return wrapAnsi(ol[1] + c.soft(ol[2] + ol[3]) + " " + renderInline(ol[4]), measure(), hang);
+    }
 
     // Unordered list: -, *, + → a tinted bullet (indentation preserved for nesting).
-    line = line.replace(/^(\s*)[-*+]\s+/, (_, sp) => sp + c.yellow("• "));
-    return renderInline(line);
+    const ul = line.match(/^(\s*)[-*+]\s+(.*)$/);
+    if (ul) return wrapAnsi(ul[1] + c.yellow("• ") + renderInline(ul[2]), measure(), ul[1] + "  ");
+    return wrapAnsi(renderInline(line), measure());
   };
 }
 
